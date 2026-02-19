@@ -1,0 +1,5 @@
+{
+  "name": "IT Automation Platform",
+  "description": "A React dashboard for managing IT automation routines, featuring a responsive grid layout, status monitoring, and Gemini AI integration for creating new automation schedules.",
+  "requestFramePermissions": []
+}

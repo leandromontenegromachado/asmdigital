@@ -1,0 +1,5 @@
+{
+  "name": "IT Automation Connectors",
+  "description": "A dashboard to manage data connectors and API integrations.",
+  "requestFramePermissions": []
+}

@@ -1,0 +1,16 @@
+﻿fastapi==0.115.6
+uvicorn[standard]==0.30.6
+pydantic-settings==2.7.1
+SQLAlchemy==2.0.36
+psycopg2-binary==2.9.9
+alembic==1.13.3
+PyJWT==2.9.0
+passlib[bcrypt]==1.7.4
+bcrypt==3.2.2
+email-validator==2.2.0
+httpx==0.27.2
+tenacity==9.0.0
+APScheduler==3.10.4
+python-json-logger==2.0.7
+python-dateutil==2.9.0.post0
+reportlab==4.2.5
