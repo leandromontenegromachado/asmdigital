@@ -32,7 +32,7 @@ const FalaAiPage: React.FC = () => {
   const [pollHistory, setPollHistory] = useState<FalaAiPollHistoryItem[]>([]);
   const [historyDate, setHistoryDate] = useState(todayIso());
 
-  const [newMessage, setNewMessage] = useState('Fala ai... ja comecou o dia garantindo o basico?');
+  const [newMessage, setNewMessage] = useState('ChefIA: ja comecou o dia garantindo o basico?');
   const [newTime, setNewTime] = useState('09:00:00');
   const [botPrompt, setBotPrompt] = useState('bom dia time');
   const [botReply, setBotReply] = useState<string>('');
@@ -141,11 +141,11 @@ const FalaAiPage: React.FC = () => {
   return (
     <AppShell>
       <Topbar
-        title="Fala Ai"
+        title="ChefIA"
         subtitle="Assistente interno com check-in, lembretes e integracao com Teams."
       />
 
-      {loading && <div className="rounded-xl border border-slate-200 bg-white p-4 text-sm text-slate-500">Carregando Fala Ai...</div>}
+      {loading && <div className="rounded-xl border border-slate-200 bg-white p-4 text-sm text-slate-500">Carregando ChefIA...</div>}
       {error && <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{error}</div>}
       {message && <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-700">{message}</div>}
       {adminError && <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">{adminError}</div>}

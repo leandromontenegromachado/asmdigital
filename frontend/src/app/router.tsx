@@ -28,6 +28,7 @@ export const router = createBrowserRouter([
       { path: 'reports/azure-boards', element: <AzureBoardsPage /> },
       { path: 'reports/prompt-templates', element: <PromptReportsPage /> },
       { path: 'automations', element: <RoutinesPage /> },
+      { path: 'chefia', element: <FalaAiPage /> },
       { path: 'fala-ai', element: <FalaAiPage /> },
       { path: 'automation', element: <RoutinesPage /> },
       { path: 'routines', element: <RoutinesPage /> },

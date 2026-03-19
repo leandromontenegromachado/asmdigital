@@ -136,7 +136,7 @@ export const Sidebar: React.FC = () => {
         </NavLink>
 
         <NavLink
-          to="/fala-ai"
+          to="/chefia"
           className={({ isActive }) =>
             `${linkBase} ${
               isActive
@@ -148,7 +148,7 @@ export const Sidebar: React.FC = () => {
           {({ isActive }) => (
             <>
               <MessageCircle className={isActive ? 'text-primary' : 'text-slate-400 group-hover:text-primary'} size={20} />
-              <p className={`text-sm ${isActive ? 'font-bold text-slate-900' : 'font-medium text-slate-600 group-hover:text-slate-900'} transition-colors`}>Fala Ai</p>
+              <p className={`text-sm ${isActive ? 'font-bold text-slate-900' : 'font-medium text-slate-600 group-hover:text-slate-900'} transition-colors`}>ChefIA</p>
             </>
           )}
         </NavLink>
