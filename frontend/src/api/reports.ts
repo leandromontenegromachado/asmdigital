@@ -42,8 +42,8 @@ export const generateRedmineReport = async (payload: GenerateReportPayload) => {
   return data;
 };
 
-export const listReports = async () => {
-  const { data } = await api.get<Report[]>('/reports');
+export const listReports = async (params: { page?: number; page_size?: number } = {}) => {
+  const { data } = await api.get<Report[]>('/reports', { params });
   return data;
 };
 

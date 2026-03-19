@@ -3,6 +3,10 @@
     "redmine": {
       "type": "http",
       "url": "http://localhost:9000/mcp"
+    },
+    "azure-devops": {
+      "type": "http",
+      "url": "http://localhost:9010/mcp"
     }
   }
 }

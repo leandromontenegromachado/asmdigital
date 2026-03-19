@@ -1,7 +1,7 @@
 from datetime import datetime
 from typing import Any, Optional
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class AutomationOut(BaseModel):
@@ -33,6 +33,20 @@ class AutomationRunOut(BaseModel):
 
 class AutomationRunRequest(BaseModel):
     simulation: bool = True
+
+
+class AutomationUpdate(BaseModel):
+    name: Optional[str] = None
+    schedule_cron: Optional[str] = None
+    is_enabled: Optional[bool] = None
+    params_json: Optional[dict[str, Any]] = None
+
+
+class AutomationCreate(BaseModel):
+    name: str
+    schedule_cron: Optional[str] = None
+    is_enabled: bool = True
+    params_json: dict[str, Any] = Field(default_factory=dict)
 
 
 class AutomationRunWithAutomation(BaseModel):

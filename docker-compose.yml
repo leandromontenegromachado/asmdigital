@@ -29,6 +29,17 @@
       REDMINE_DEFAULT_TIMEOUT: ${REDMINE_DEFAULT_TIMEOUT:-20}
       REDMINE_RETRY_ATTEMPTS: ${REDMINE_RETRY_ATTEMPTS:-3}
       REDMINE_RETRY_WAIT_SECONDS: ${REDMINE_RETRY_WAIT_SECONDS:-2}
+      FALA_AI_TEAMS_WEBHOOK_SECRET: ${FALA_AI_TEAMS_WEBHOOK_SECRET:-}
+      FALA_AI_TEAMS_OUTGOING_WEBHOOK: ${FALA_AI_TEAMS_OUTGOING_WEBHOOK:-}
+      FALA_AI_TEAMS_BOT_APP_ID: ${FALA_AI_TEAMS_BOT_APP_ID:-}
+      FALA_AI_TEAMS_BOT_APP_SECRET: ${FALA_AI_TEAMS_BOT_APP_SECRET:-}
+      FALA_AI_TEAMS_BOT_TENANT_ID: ${FALA_AI_TEAMS_BOT_TENANT_ID:-botframework.com}
+      FALA_AI_TEAMS_DEFAULT_SERVICE_URL: ${FALA_AI_TEAMS_DEFAULT_SERVICE_URL:-}
+      FALA_AI_TEAMS_DEFAULT_CONVERSATION_ID: ${FALA_AI_TEAMS_DEFAULT_CONVERSATION_ID:-}
+      FALA_AI_TEAMS_DEFAULT_BOT_ID: ${FALA_AI_TEAMS_DEFAULT_BOT_ID:-}
+      FALA_AI_TEAMS_FALLBACK_USER_EMAIL: ${FALA_AI_TEAMS_FALLBACK_USER_EMAIL:-}
+      FALA_AI_TEAMS_FALLBACK_USER_ID: ${FALA_AI_TEAMS_FALLBACK_USER_ID:-}
+      FALA_AI_MISSING_CHECKIN_CRON: ${FALA_AI_MISSING_CHECKIN_CRON:-0 16 * * 1-5}
     ports:
       - "8000:8000"
     depends_on:
@@ -66,6 +77,22 @@
       - "${REDMINE_MCP_PORT:-9000}:9000"
     healthcheck:
       test: ["CMD-SHELL", "python -c \"import socket; s=socket.create_connection(('127.0.0.1', 9000), 3); s.close()\" || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+
+  azure-devops-mcp:
+    image: guang1/azure-devops-mcp:latest
+    profiles: ["mcp"]
+    restart: unless-stopped
+    environment:
+      org.name: ${AZURE_DEVOPS_ORG}
+      project.name: ${AZURE_DEVOPS_PROJECT}
+      pat: ${AZURE_DEVOPS_PAT}
+    ports:
+      - "${AZURE_MCP_PORT:-9010}:8080"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O - http://127.0.0.1:8080/mcp >/dev/null 2>&1 || exit 1"]
       interval: 15s
       timeout: 5s
       retries: 5

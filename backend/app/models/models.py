@@ -3,6 +3,7 @@ from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import relationship
 
 from app.db.base import Base
+from app.modules.fala_ai.models import FalaAiCheckin, FalaAiLog, FalaAiReminder
 
 
 class User(Base):
@@ -131,3 +132,19 @@ class Notification(Base):
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     sent_at = Column(DateTime(timezone=True), nullable=True)
     simulation = Column(Boolean, nullable=False, default=False)
+
+
+__all__ = [
+    "User",
+    "Connector",
+    "Mapping",
+    "Report",
+    "ReportRow",
+    "PromptReportTemplate",
+    "Automation",
+    "AutomationRun",
+    "Notification",
+    "FalaAiCheckin",
+    "FalaAiReminder",
+    "FalaAiLog",
+]

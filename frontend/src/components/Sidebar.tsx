@@ -8,6 +8,7 @@ import {
   Settings,
   Users,
   Bot,
+  MessageCircle,
   LogOut,
 } from 'lucide-react';
 import { useAuth } from '../app/auth';
@@ -99,6 +100,24 @@ export const Sidebar: React.FC = () => {
         </NavLink>
 
         <NavLink
+          to="/reports/azure-boards"
+          className={({ isActive }) =>
+            `${linkBase} ${
+              isActive
+                ? 'bg-blue-50 border-primary'
+                : 'hover:bg-slate-50 border-transparent'
+            }`
+          }
+        >
+          {({ isActive }) => (
+            <>
+              <FileText className={isActive ? 'text-primary' : 'text-slate-400 group-hover:text-primary'} size={20} />
+              <p className={`text-sm ${isActive ? 'font-bold text-slate-900' : 'font-medium text-slate-600 group-hover:text-slate-900'} transition-colors`}>Azure Boards</p>
+            </>
+          )}
+        </NavLink>
+
+        <NavLink
           to="/reports/prompt-templates"
           className={({ isActive }) =>
             `${linkBase} ${
@@ -112,6 +131,24 @@ export const Sidebar: React.FC = () => {
             <>
               <Bot className={isActive ? 'text-primary' : 'text-slate-400 group-hover:text-primary'} size={20} />
               <p className={`text-sm ${isActive ? 'font-bold text-slate-900' : 'font-medium text-slate-600 group-hover:text-slate-900'} transition-colors`}>Relatórios IA</p>
+            </>
+          )}
+        </NavLink>
+
+        <NavLink
+          to="/fala-ai"
+          className={({ isActive }) =>
+            `${linkBase} ${
+              isActive
+                ? 'bg-blue-50 border-primary'
+                : 'hover:bg-slate-50 border-transparent'
+            }`
+          }
+        >
+          {({ isActive }) => (
+            <>
+              <MessageCircle className={isActive ? 'text-primary' : 'text-slate-400 group-hover:text-primary'} size={20} />
+              <p className={`text-sm ${isActive ? 'font-bold text-slate-900' : 'font-medium text-slate-600 group-hover:text-slate-900'} transition-colors`}>Fala Ai</p>
             </>
           )}
         </NavLink>

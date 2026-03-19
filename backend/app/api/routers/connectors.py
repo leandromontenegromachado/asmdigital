@@ -7,6 +7,7 @@ from app.api.deps import get_current_user
 from app.db.session import get_db
 from app.models import Connector
 from app.schemas.connectors import ConnectorCreate, ConnectorOut, ConnectorTestResult, ConnectorUpdate, RedmineQueryOut
+from app.services.azure_devops_service import AZURE_CONNECTOR_TYPES, get_azure_adapter
 
 router = APIRouter(prefix="/connectors", tags=["connectors"])
 
@@ -56,6 +57,13 @@ def test_connector(
     if not connector:
         raise HTTPException(status_code=404, detail="Connector not found")
     if connector.type != "redmine":
+        if connector.type in AZURE_CONNECTOR_TYPES:
+            try:
+                adapter = get_azure_adapter(connector)
+                details = adapter.test_connection()
+                return ConnectorTestResult(ok=True, message="Connection successful", details=details)
+            except Exception as exc:  # noqa: BLE001
+                return ConnectorTestResult(ok=False, message="Connection failed", details={"error": str(exc)})
         return ConnectorTestResult(ok=True, message="Connector type does not require test")
     try:
         adapter = RedmineAdapter(

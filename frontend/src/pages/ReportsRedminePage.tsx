@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { Download, Play } from 'lucide-react';
+import { useSearchParams } from 'react-router-dom';
 import { AppShell } from '../components/AppShell';
 import { Topbar } from '../components/Topbar';
 import { StateBlock } from '../components/StateBlock';
@@ -9,6 +10,7 @@ import { listConnectors, listRedmineQueries, Connector, RedmineQuery } from '../
 import { generateRedmineReport, getReport, exportReportCsv, exportReportPdf, ReportDetail } from '../api/reports';
 
 const ReportsRedminePage: React.FC = () => {
+  const [searchParams] = useSearchParams();
   const [connectors, setConnectors] = useState<Connector[]>([]);
   const [connectorId, setConnectorId] = useState<number | null>(null);
   const [projectIds, setProjectIds] = useState('');
@@ -46,6 +48,37 @@ const ReportsRedminePage: React.FC = () => {
   useEffect(() => {
     loadConnectors();
   }, []);
+
+  useEffect(() => {
+    const reportIdParam = searchParams.get('report_id');
+    const reportId = Number(reportIdParam);
+    if (!reportIdParam || !Number.isFinite(reportId) || reportId <= 0) {
+      return;
+    }
+
+    let active = true;
+    setLoading(true);
+    setError(null);
+
+    getReport(reportId, { page: 1, page_size: 10 })
+      .then((detail) => {
+        if (!active) return;
+        setReport(detail);
+        setPage(1);
+        pushToast({ title: 'Relatorio carregado', description: `Exibindo relatorio #${reportId}.`, tone: 'success' });
+      })
+      .catch(() => {
+        if (!active) return;
+        setError(`Nao foi possivel carregar o relatorio #${reportId}.`);
+      })
+      .finally(() => {
+        if (active) setLoading(false);
+      });
+
+    return () => {
+      active = false;
+    };
+  }, [searchParams]);
 
   useEffect(() => {
     if (!connectorId || !connectors.length) return;

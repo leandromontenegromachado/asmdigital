@@ -2,6 +2,9 @@ from app.models.models import (
     Automation,
     AutomationRun,
     Connector,
+    FalaAiCheckin,
+    FalaAiLog,
+    FalaAiReminder,
     Mapping,
     Notification,
     PromptReportTemplate,
@@ -20,4 +23,7 @@ __all__ = [
     "Automation",
     "AutomationRun",
     "Notification",
+    "FalaAiCheckin",
+    "FalaAiReminder",
+    "FalaAiLog",
 ]

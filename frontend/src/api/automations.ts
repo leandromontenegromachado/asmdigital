@@ -11,6 +11,20 @@ export interface Automation {
   next_run_at?: string | null;
 }
 
+export interface AutomationUpdatePayload {
+  name?: string;
+  schedule_cron?: string | null;
+  is_enabled?: boolean;
+  params_json?: Record<string, any>;
+}
+
+export interface AutomationCreatePayload {
+  name: string;
+  schedule_cron?: string | null;
+  is_enabled?: boolean;
+  params_json?: Record<string, any>;
+}
+
 export interface AutomationRun {
   id: number;
   automation_id: number;
@@ -30,6 +44,16 @@ export const listAutomations = async () => {
 
 export const runAutomation = async (id: number, simulation = true) => {
   const { data } = await api.post(`/automations/${id}/run`, { simulation });
+  return data;
+};
+
+export const createAutomation = async (payload: AutomationCreatePayload) => {
+  const { data } = await api.post<Automation>('/automations', payload);
+  return data;
+};
+
+export const updateAutomation = async (id: number, payload: AutomationUpdatePayload) => {
+  const { data } = await api.put<Automation>(`/automations/${id}`, payload);
   return data;
 };
 
