@@ -14,3 +14,6 @@ APScheduler==3.10.4
 python-json-logger==2.0.7
 python-dateutil==2.9.0.post0
 reportlab==4.2.5
+python-multipart==0.0.12
+openpyxl==3.1.5
+xlrd==2.0.1

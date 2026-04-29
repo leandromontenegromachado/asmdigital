@@ -12,6 +12,7 @@ export interface FalaAiReminder {
   id: number;
   mensagem: string;
   horario: string;
+  dias_semana: number[];
   ativo: boolean;
   created_at: string;
   updated_at: string;
@@ -71,12 +72,12 @@ export const listReminders = async () => {
   return data;
 };
 
-export const createReminder = async (payload: { mensagem: string; horario: string; ativo: boolean }) => {
+export const createReminder = async (payload: { mensagem: string; horario: string; dias_semana: number[]; ativo: boolean }) => {
   const { data } = await api.post<FalaAiReminder>('/fala-ai/reminders', payload);
   return data;
 };
 
-export const updateReminder = async (id: number, payload: Partial<{ mensagem: string; horario: string; ativo: boolean }>) => {
+export const updateReminder = async (id: number, payload: Partial<{ mensagem: string; horario: string; dias_semana: number[]; ativo: boolean }>) => {
   const { data } = await api.put<FalaAiReminder>(`/fala-ai/reminders/${id}`, payload);
   return data;
 };

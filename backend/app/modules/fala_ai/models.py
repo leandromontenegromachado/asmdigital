@@ -20,6 +20,7 @@ class FalaAiReminder(Base):
     id = Column(Integer, primary_key=True, index=True)
     mensagem = Column(Text, nullable=False)
     horario = Column(Time(timezone=False), nullable=False)
+    dias_semana = Column(String(32), nullable=False, default="1,2,3,4,5")
     ativo = Column(Boolean, nullable=False, default=True)
     created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
     updated_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now())

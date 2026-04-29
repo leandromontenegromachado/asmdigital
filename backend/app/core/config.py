@@ -26,6 +26,7 @@ class Settings(BaseSettings):
     redmine_default_timeout: int = 20
     redmine_retry_attempts: int = 3
     redmine_retry_wait_seconds: int = 2
+    scheduler_timezone: str = "America/Sao_Paulo"
     fala_ai_teams_webhook_secret: str | None = None
     fala_ai_teams_outgoing_webhook: str | None = None
     fala_ai_teams_bot_app_id: str | None = None
@@ -37,6 +38,11 @@ class Settings(BaseSettings):
     fala_ai_teams_fallback_user_email: str | None = None
     fala_ai_teams_fallback_user_id: str | None = None
     fala_ai_missing_checkin_cron: str = "0 16 * * 1-5"
+    fala_ai_assistant_enabled: bool = True
+    fala_ai_assistant_domain: str = "geral"
+    fala_ai_gemini_api_key: str | None = None
+    fala_ai_gemini_model: str = "gemini-2.5-flash"
+    fala_ai_gemini_timeout_seconds: int = 60
 
 
 settings = Settings()

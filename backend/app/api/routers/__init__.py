@@ -6,5 +6,6 @@ from app.api.routers.prompt_reports import router as prompt_reports
 from app.api.routers.automations import router as automations
 from app.api.routers.azure_devops import router as azure_devops
 from app.api.routers.users import router as users
+from app.api.routers.evaluation import router as evaluation
 
-__all__ = ["auth", "connectors", "mappings", "reports", "prompt_reports", "automations", "azure_devops", "users"]
+__all__ = ["auth", "connectors", "mappings", "reports", "prompt_reports", "automations", "azure_devops", "users", "evaluation"]

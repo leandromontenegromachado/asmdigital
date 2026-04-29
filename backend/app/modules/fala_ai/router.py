@@ -86,7 +86,13 @@ def create_reminder_endpoint(
     db: Session = Depends(get_db),
     _admin: User = Depends(require_admin),
 ):
-    reminder = create_reminder(db, mensagem=payload.mensagem, horario=payload.horario, ativo=payload.ativo)
+    reminder = create_reminder(
+        db,
+        mensagem=payload.mensagem,
+        horario=payload.horario,
+        dias_semana=payload.dias_semana,
+        ativo=payload.ativo,
+    )
     sync_fala_ai_jobs(db, scheduler)
     return reminder
 
@@ -237,7 +243,7 @@ async def teams_webhook_endpoint(request: Request, db: Session = Depends(get_db)
 
     return FalaAiWebhookResponse(
         status="ok",
-        detail="Check-in registrado",
+        detail="Resposta registrada",
         checkin_id=checkin.id,
         reply_message=reply,
     )

@@ -11,6 +11,12 @@ import MappingsPage from '../pages/MappingsPage';
 import UsersPage from '../pages/UsersPage';
 import RoutinesPage from '../pages/RoutinesPage';
 import FalaAiPage from '../pages/FalaAiPage';
+import EvaluationCyclesPage from '../pages/EvaluationCyclesPage';
+import EvaluationAiReportPage from '../pages/EvaluationAiReportPage';
+import EvaluationImportsPage from '../pages/EvaluationImportsPage';
+import EvaluationScoringPage from '../pages/EvaluationScoringPage';
+import EvaluationCalibrationPage from '../pages/EvaluationCalibrationPage';
+import EvaluationFinalListPage from '../pages/EvaluationFinalListPage';
 
 const Root = ({ children }: { children: React.ReactNode }) => {
   return <AuthProvider>{children}</AuthProvider>;
@@ -35,6 +41,12 @@ export const router = createBrowserRouter([
       { path: 'rotinas', element: <RoutinesPage /> },
       { path: 'settings/mappings', element: <MappingsPage /> },
       { path: 'settings/users', element: <UsersPage /> },
+      { path: 'evaluation/cycles', element: <EvaluationCyclesPage /> },
+      { path: 'evaluation/imports', element: <EvaluationImportsPage /> },
+      { path: 'evaluation/ai-report', element: <EvaluationAiReportPage /> },
+      { path: 'evaluation/scoring', element: <EvaluationScoringPage /> },
+      { path: 'evaluation/calibration', element: <EvaluationCalibrationPage /> },
+      { path: 'evaluation/final-list', element: <EvaluationFinalListPage /> },
     ],
   },
   {

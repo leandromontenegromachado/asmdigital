@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import date, datetime, time
 from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 
 class FalaAiCheckinCreate(BaseModel):
@@ -27,22 +27,53 @@ class FalaAiCheckinOut(BaseModel):
 class FalaAiReminderCreate(BaseModel):
     mensagem: str = Field(min_length=1, max_length=1000)
     horario: time
+    dias_semana: list[int] = Field(default_factory=lambda: [1, 2, 3, 4, 5])
     ativo: bool = True
+
+    @field_validator("dias_semana")
+    @classmethod
+    def validate_dias_semana(cls, value: list[int]) -> list[int]:
+        normalized = sorted(set(value or [1, 2, 3, 4, 5]))
+        if any(day < 0 or day > 6 for day in normalized):
+            raise ValueError("dias_semana must contain values between 0 and 6")
+        return normalized
 
 
 class FalaAiReminderUpdate(BaseModel):
     mensagem: str | None = Field(default=None, min_length=1, max_length=1000)
     horario: time | None = None
+    dias_semana: list[int] | None = None
     ativo: bool | None = None
+
+    @field_validator("dias_semana")
+    @classmethod
+    def validate_dias_semana(cls, value: list[int] | None) -> list[int] | None:
+        if value is None:
+            return None
+        normalized = sorted(set(value))
+        if any(day < 0 or day > 6 for day in normalized):
+            raise ValueError("dias_semana must contain values between 0 and 6")
+        return normalized
 
 
 class FalaAiReminderOut(BaseModel):
     id: int
     mensagem: str
     horario: time
+    dias_semana: list[int]
     ativo: bool
     created_at: datetime
     updated_at: datetime
+
+    @field_validator("dias_semana", mode="before")
+    @classmethod
+    def parse_dias_semana(cls, value: Any) -> list[int]:
+        if isinstance(value, list):
+            return [int(item) for item in value]
+        if isinstance(value, str):
+            days = [part.strip() for part in value.split(",") if part.strip()]
+            return [int(item) for item in days]
+        return [1, 2, 3, 4, 5]
 
     class Config:
         from_attributes = True

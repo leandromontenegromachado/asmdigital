@@ -9,13 +9,14 @@ from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.models import User
+from app.modules.fala_ai.assistant import build_assistant_answer
 from app.modules.fala_ai.models import FalaAiCheckin, FalaAiLog, FalaAiReminder
 from app.modules.fala_ai.schemas import FalaAiCheckinCreate, FalaAiDailyReportOut, FalaAiDailyUserStatus
 from app.modules.fala_ai.teams_integration import extract_teams_identity
 
 
 BOT_OPENERS = [
-    "Fala ai! Bora fazer esse check-in?",
+    "Fala ai! Bora registrar sua resposta?",
     "Partiu garantir o basico do dia?",
     "Fala ai... status rapido e vida que segue.",
 ]
@@ -43,6 +44,7 @@ CHECKIN_CONFIRM_REACTIONS = {
 }
 
 ACTIVE_DISPATCH_WINDOW_HOURS = 16
+DEFAULT_WEEKDAYS = [1, 2, 3, 4, 5]
 
 
 def build_engagement_snapshot(db: Session, target_date: date) -> dict[str, Any]:
@@ -127,8 +129,21 @@ def list_reminders(db: Session) -> list[FalaAiReminder]:
     return db.query(FalaAiReminder).order_by(FalaAiReminder.horario.asc(), FalaAiReminder.id.asc()).all()
 
 
-def create_reminder(db: Session, *, mensagem: str, horario, ativo: bool) -> FalaAiReminder:
-    reminder = FalaAiReminder(mensagem=mensagem.strip(), horario=horario, ativo=ativo)
+def _normalize_weekdays(days: list[int] | None) -> str:
+    values = sorted(set(days or DEFAULT_WEEKDAYS))
+    filtered = [day for day in values if 0 <= day <= 6]
+    if not filtered:
+        filtered = DEFAULT_WEEKDAYS
+    return ",".join(str(day) for day in filtered)
+
+
+def create_reminder(db: Session, *, mensagem: str, horario, dias_semana: list[int], ativo: bool) -> FalaAiReminder:
+    reminder = FalaAiReminder(
+        mensagem=mensagem.strip(),
+        horario=horario,
+        dias_semana=_normalize_weekdays(dias_semana),
+        ativo=ativo,
+    )
     db.add(reminder)
     db.commit()
     db.refresh(reminder)
@@ -136,6 +151,8 @@ def create_reminder(db: Session, *, mensagem: str, horario, ativo: bool) -> Fala
 
 
 def update_reminder(db: Session, reminder: FalaAiReminder, changes: dict[str, Any]) -> FalaAiReminder:
+    if "dias_semana" in changes:
+        changes["dias_semana"] = _normalize_weekdays(changes.get("dias_semana"))
     for key, value in changes.items():
         setattr(reminder, key, value)
     db.commit()
@@ -149,14 +166,7 @@ def delete_reminder(db: Session, reminder: FalaAiReminder) -> None:
 
 
 def build_bot_reply(mensagem: str) -> str:
-    text = (mensagem or "").lower()
-    if "bom dia" in text:
-        return "Bom dia! Ja mandou seu check-in? Vale ponto de honra."
-    if "status" in text:
-        return "Resumo do dia: foco no essencial e check-in em dia."
-    if "help" in text or "ajuda" in text:
-        return "Posso registrar check-in, lembrar horarios e gerar relatorio diario."
-    return BOT_OPENERS[hash(text) % len(BOT_OPENERS)]
+    return build_assistant_answer(mensagem or "")
 
 
 def _normalize_text(value: str) -> str:
@@ -495,12 +505,30 @@ def process_teams_webhook_payload(db: Session, payload: dict[str, Any]) -> tuple
         return None, "Recebi sua mensagem, mas ainda nao consegui vincular seu usuario no sistema."
 
     if not should_checkin:
+        # Non-checkin message: treat as question to assistant bot.
+        if activity_type == "message":
+            assistant_reply = build_assistant_answer(identity.get("message") or "", user_name=getattr(user, "name", None))
+            register_log(
+                db,
+                "teams_question_answered",
+                {
+                    "user_id": user.id,
+                    "message": identity.get("message"),
+                    "used_domain": settings.fala_ai_assistant_domain,
+                    "active_dispatch": bool(active_dispatch),
+                },
+            )
+            if active_dispatch:
+                hint = " Se voce ja respondeu a enquete, responde com 'sim' ou reage com like nesta mensagem."
+                return None, f"{assistant_reply}{hint}"
+            return None, assistant_reply
+
         register_log(
             db,
             "teams_message_without_checkin_confirmation",
             {"user_id": user.id, "message": identity.get("message"), "reason": reason},
         )
-        return None, "Se voce ja bateu o ponto, responde com 'sim' ou reage com like nesta mensagem."
+        return None, "Se voce ja respondeu a enquete, responde com 'sim' ou reage com like nesta mensagem."
 
     if not active_dispatch:
         register_log(
@@ -508,7 +536,7 @@ def process_teams_webhook_payload(db: Session, payload: dict[str, Any]) -> tuple
             "teams_confirmation_without_active_dispatch",
             {"user_id": user.id, "message": identity.get("message"), "reason": reason},
         )
-        return None, "Ainda nao ha enquete ativa para este chat."
+        return None, "Ainda nao ha enquete ativa para registrar resposta neste chat."
 
     dispatch_id = str(active_dispatch.get("dispatch_id") or "")
     if dispatch_id and _checkin_already_recorded_for_dispatch(db, user_id=user.id, dispatch_id=dispatch_id):
@@ -531,7 +559,7 @@ def process_teams_webhook_payload(db: Session, payload: dict[str, Any]) -> tuple
         allow_impersonation=True,
     )
 
-    reply = "Show! Check-in confirmado com sucesso."
+    reply = "Show! Resposta registrada com sucesso."
     register_log(
         db,
         "teams_checkin_registered",

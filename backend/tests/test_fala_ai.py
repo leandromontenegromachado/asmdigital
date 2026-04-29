@@ -132,7 +132,7 @@ class FalaAiTests(unittest.TestCase):
 
         self.assertIsNotNone(created)
         self.assertEqual(created.id, 99)
-        self.assertIn('Check-in', reply)
+        self.assertIn('Resposta', reply)
 
     def test_process_teams_webhook_without_confirmation_does_not_register(self):
         db = MagicMock()
@@ -154,11 +154,12 @@ class FalaAiTests(unittest.TestCase):
             },
         ):
             with patch('app.modules.fala_ai.service.resolve_user', return_value=user):
-                with patch('app.modules.fala_ai.service.register_log'):
-                    created, reply = process_teams_webhook_payload(db, payload)
+                with patch('app.modules.fala_ai.service.build_assistant_answer', return_value='Bom dia! Como posso ajudar?'):
+                    with patch('app.modules.fala_ai.service.register_log'):
+                        created, reply = process_teams_webhook_payload(db, payload)
 
         self.assertIsNone(created)
-        self.assertIn("responde com 'sim'", reply)
+        self.assertEqual(reply, 'Bom dia! Como posso ajudar?')
 
     def test_validate_teams_signature(self):
         body = b'{"text":"hello"}'

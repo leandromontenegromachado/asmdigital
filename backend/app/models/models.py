@@ -1,4 +1,4 @@
-from sqlalchemy import Boolean, Column, DateTime, ForeignKey, Integer, String, Text, func
+from sqlalchemy import Boolean, Column, Date, DateTime, Float, ForeignKey, Integer, String, Text, UniqueConstraint, func
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import relationship
 
@@ -134,6 +134,254 @@ class Notification(Base):
     simulation = Column(Boolean, nullable=False, default=False)
 
 
+class EvaluationCycle(Base):
+    __tablename__ = "evaluation_cycles"
+
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String(200), nullable=False)
+    start_date = Column(Date, nullable=False)
+    end_date = Column(Date, nullable=False)
+    status = Column(String(30), nullable=False, default="RASCUNHO")
+    performance_weight = Column(Float, nullable=False, default=0.10)
+    behavior_weight = Column(Float, nullable=False, default=0.45)
+    potential_weight = Column(Float, nullable=False, default=0.45)
+    notes = Column(Text, nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
+
+    indicators = relationship("PerformanceIndicator", back_populates="cycle", cascade="all, delete-orphan")
+    imports = relationship("EvaluationImport", back_populates="cycle", cascade="all, delete-orphan")
+    reviews = relationship("Review360", back_populates="cycle", cascade="all, delete-orphan")
+    potentials = relationship("PotentialScore", back_populates="cycle", cascade="all, delete-orphan")
+    scores = relationship("EvaluationScore", back_populates="cycle", cascade="all, delete-orphan")
+    alerts = relationship("EvaluationAlert", back_populates="cycle", cascade="all, delete-orphan")
+    ai_feedback = relationship("AiFeedbackAnalysis", back_populates="cycle", cascade="all, delete-orphan")
+
+
+class Employee(Base):
+    __tablename__ = "employees"
+
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String(200), nullable=False)
+    email = Column(String(200), nullable=False, unique=True, index=True)
+    department = Column(String(120), nullable=True, index=True)
+    position = Column(String(120), nullable=True)
+    manager_id = Column(Integer, ForeignKey("employees.id"), nullable=True)
+    active = Column(Boolean, nullable=False, default=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
+
+    manager = relationship("Employee", remote_side=[id])
+    rh_data = relationship("EmployeeRhData", back_populates="employee", cascade="all, delete-orphan")
+
+
+class EmployeeRhData(Base):
+    __tablename__ = "employee_rh_data"
+    __table_args__ = (UniqueConstraint("cycle_id", "employee_id", name="uq_employee_rh_data_cycle_employee"),)
+
+    id = Column(Integer, primary_key=True, index=True)
+    cycle_id = Column(Integer, ForeignKey("evaluation_cycles.id"), nullable=False, index=True)
+    employee_id = Column(Integer, ForeignKey("employees.id"), nullable=False, index=True)
+    career_level = Column(Integer, nullable=True)
+    last_merit_date = Column(Date, nullable=True)
+    admission_date = Column(Date, nullable=True)
+    is_level_one_separate_budget = Column(Boolean, nullable=False, default=False)
+    eligible_for_merit = Column(Boolean, nullable=False, default=True)
+    eligibility_reason = Column(Text, nullable=True)
+    raw_data_json = Column(JSONB, nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
+
+    cycle = relationship("EvaluationCycle")
+    employee = relationship("Employee", back_populates="rh_data")
+
+
+class PerformanceIndicator(Base):
+    __tablename__ = "performance_indicators"
+    __table_args__ = (UniqueConstraint("cycle_id", "employee_id", name="uq_performance_indicator_cycle_employee"),)
+
+    id = Column(Integer, primary_key=True, index=True)
+    cycle_id = Column(Integer, ForeignKey("evaluation_cycles.id"), nullable=False, index=True)
+    employee_id = Column(Integer, ForeignKey("employees.id"), nullable=False, index=True)
+    rpm_original = Column(Float, nullable=True)
+    rpm_normalized = Column(Float, nullable=True)
+    ihpe_original = Column(Float, nullable=True)
+    ihpe_normalized = Column(Float, nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
+
+    cycle = relationship("EvaluationCycle", back_populates="indicators")
+    employee = relationship("Employee")
+
+
+class EvaluationImport(Base):
+    __tablename__ = "evaluation_imports"
+
+    id = Column(Integer, primary_key=True, index=True)
+    cycle_id = Column(Integer, ForeignKey("evaluation_cycles.id"), nullable=False, index=True)
+    file_name = Column(String(255), nullable=False)
+    status = Column(String(30), nullable=False, default="UPLOADED", index=True)
+    uploaded_by = Column(Integer, ForeignKey("users.id"), nullable=True)
+    uploaded_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    column_mapping_json = Column(JSONB, nullable=True)
+    total_rows = Column(Integer, nullable=False, default=0)
+    valid_rows = Column(Integer, nullable=False, default=0)
+    invalid_rows = Column(Integer, nullable=False, default=0)
+    error_message = Column(Text, nullable=True)
+
+    cycle = relationship("EvaluationCycle", back_populates="imports")
+    rows = relationship("EvaluationImportRow", back_populates="import_record", cascade="all, delete-orphan")
+
+
+class EvaluationImportRow(Base):
+    __tablename__ = "evaluation_import_rows"
+
+    id = Column(Integer, primary_key=True, index=True)
+    import_id = Column(Integer, ForeignKey("evaluation_imports.id"), nullable=False, index=True)
+    row_number = Column(Integer, nullable=False)
+    raw_data_json = Column(JSONB, nullable=False)
+    normalized_data_json = Column(JSONB, nullable=True)
+    status = Column(String(30), nullable=False, default="PENDING", index=True)
+    error_message = Column(Text, nullable=True)
+
+    import_record = relationship("EvaluationImport", back_populates="rows")
+    reviews = relationship("Review360", back_populates="import_row")
+
+
+class Review360(Base):
+    __tablename__ = "reviews_360"
+
+    id = Column(Integer, primary_key=True, index=True)
+    cycle_id = Column(Integer, ForeignKey("evaluation_cycles.id"), nullable=False, index=True)
+    import_id = Column(Integer, ForeignKey("evaluation_imports.id"), nullable=True, index=True)
+    import_row_id = Column(Integer, ForeignKey("evaluation_import_rows.id"), nullable=True, index=True)
+    evaluator_id = Column(Integer, ForeignKey("employees.id"), nullable=True, index=True)
+    evaluator_email = Column(String(200), nullable=True)
+    evaluator_name = Column(String(200), nullable=True)
+    evaluated_id = Column(Integer, ForeignKey("employees.id"), nullable=True, index=True)
+    evaluated_email = Column(String(200), nullable=True)
+    evaluated_name = Column(String(200), nullable=True)
+    relation_type = Column(String(30), nullable=False, index=True)
+    score = Column(Float, nullable=True)
+    general_score = Column(Float, nullable=True)
+    communication_score = Column(Float, nullable=True)
+    teamwork_score = Column(Float, nullable=True)
+    commitment_score = Column(Float, nullable=True)
+    autonomy_score = Column(Float, nullable=True)
+    quality_score = Column(Float, nullable=True)
+    problem_solving_score = Column(Float, nullable=True)
+    strengths_comment = Column(Text, nullable=True)
+    improvement_comment = Column(Text, nullable=True)
+    general_comment = Column(Text, nullable=True)
+    comment = Column(Text, nullable=True)
+    submitted_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
+
+    cycle = relationship("EvaluationCycle", back_populates="reviews")
+    import_record = relationship("EvaluationImport")
+    import_row = relationship("EvaluationImportRow", back_populates="reviews")
+    evaluator = relationship("Employee", foreign_keys=[evaluator_id])
+    evaluated = relationship("Employee", foreign_keys=[evaluated_id])
+
+
+class PotentialScore(Base):
+    __tablename__ = "potential_scores"
+    __table_args__ = (UniqueConstraint("cycle_id", "employee_id", name="uq_potential_score_cycle_employee"),)
+
+    id = Column(Integer, primary_key=True, index=True)
+    cycle_id = Column(Integer, ForeignKey("evaluation_cycles.id"), nullable=False, index=True)
+    employee_id = Column(Integer, ForeignKey("employees.id"), nullable=False, index=True)
+    score = Column(Float, nullable=False)
+    comment = Column(Text, nullable=True)
+    created_by = Column(Integer, ForeignKey("users.id"), nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
+
+    cycle = relationship("EvaluationCycle", back_populates="potentials")
+    employee = relationship("Employee")
+
+
+class EvaluationScore(Base):
+    __tablename__ = "evaluation_scores"
+    __table_args__ = (UniqueConstraint("cycle_id", "employee_id", name="uq_evaluation_score_cycle_employee"),)
+
+    id = Column(Integer, primary_key=True, index=True)
+    cycle_id = Column(Integer, ForeignKey("evaluation_cycles.id"), nullable=False, index=True)
+    employee_id = Column(Integer, ForeignKey("employees.id"), nullable=False, index=True)
+    performance_score = Column(Float, nullable=True)
+    behavior_score = Column(Float, nullable=True)
+    potential_score = Column(Float, nullable=True)
+    preliminary_final_score = Column(Float, nullable=True)
+    suggested_category = Column(String(40), nullable=True)
+    final_category = Column(String(40), nullable=True)
+    nine_box_position = Column(String(40), nullable=True)
+    calibration_justification = Column(Text, nullable=True)
+    calibrated_by = Column(Integer, ForeignKey("users.id"), nullable=True)
+    calibrated_at = Column(DateTime(timezone=True), nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
+
+    cycle = relationship("EvaluationCycle", back_populates="scores")
+    employee = relationship("Employee")
+
+
+class EvaluationAlert(Base):
+    __tablename__ = "evaluation_alerts"
+
+    id = Column(Integer, primary_key=True, index=True)
+    cycle_id = Column(Integer, ForeignKey("evaluation_cycles.id"), nullable=False, index=True)
+    employee_id = Column(Integer, ForeignKey("employees.id"), nullable=False, index=True)
+    alert_type = Column(String(60), nullable=False, index=True)
+    message = Column(Text, nullable=False)
+    severity = Column(String(20), nullable=False)
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    resolved_at = Column(DateTime(timezone=True), nullable=True)
+    resolved_by = Column(Integer, ForeignKey("users.id"), nullable=True)
+
+    cycle = relationship("EvaluationCycle", back_populates="alerts")
+    employee = relationship("Employee")
+
+
+class AiFeedbackAnalysis(Base):
+    __tablename__ = "ai_feedback_analysis"
+    __table_args__ = (UniqueConstraint("cycle_id", "employee_id", name="uq_ai_feedback_analysis_cycle_employee"),)
+
+    id = Column(Integer, primary_key=True, index=True)
+    cycle_id = Column(Integer, ForeignKey("evaluation_cycles.id"), nullable=False, index=True)
+    employee_id = Column(Integer, ForeignKey("employees.id"), nullable=False, index=True)
+    status = Column(String(30), nullable=False, default="PENDING", index=True)
+    summary = Column(Text, nullable=True)
+    strengths_json = Column(JSONB, nullable=True)
+    attention_points_json = Column(JSONB, nullable=True)
+    recurring_themes_json = Column(JSONB, nullable=True)
+    qualitative_alerts_json = Column(JSONB, nullable=True)
+    suggested_feedback = Column(Text, nullable=True)
+    model_used = Column(String(120), nullable=True)
+    raw_response_json = Column(JSONB, nullable=True)
+    error_message = Column(Text, nullable=True)
+    reviewed_by = Column(Integer, ForeignKey("users.id"), nullable=True)
+    reviewed_at = Column(DateTime(timezone=True), nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
+
+    cycle = relationship("EvaluationCycle", back_populates="ai_feedback")
+    employee = relationship("Employee")
+
+
+class AuditLog(Base):
+    __tablename__ = "audit_logs"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=True, index=True)
+    action = Column(String(100), nullable=False, index=True)
+    entity_type = Column(String(100), nullable=False, index=True)
+    entity_id = Column(Integer, nullable=True, index=True)
+    old_value = Column(JSONB, nullable=True)
+    new_value = Column(JSONB, nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+
 __all__ = [
     "User",
     "Connector",
@@ -144,6 +392,18 @@ __all__ = [
     "Automation",
     "AutomationRun",
     "Notification",
+    "EvaluationCycle",
+    "Employee",
+    "EmployeeRhData",
+    "EvaluationImport",
+    "EvaluationImportRow",
+    "PerformanceIndicator",
+    "Review360",
+    "PotentialScore",
+    "EvaluationScore",
+    "EvaluationAlert",
+    "AiFeedbackAnalysis",
+    "AuditLog",
     "FalaAiCheckin",
     "FalaAiReminder",
     "FalaAiLog",

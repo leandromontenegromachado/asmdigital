@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 import logging
 from uuid import uuid4
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from apscheduler.schedulers.base import BaseScheduler
 from apscheduler.triggers.cron import CronTrigger
@@ -18,6 +19,14 @@ logger = logging.getLogger(__name__)
 
 JOB_PREFIX = "fala_ai:reminder:"
 MISSING_CHECKIN_JOB_ID = "fala_ai:missing_checkins"
+
+
+def _scheduler_tz():
+    try:
+        return ZoneInfo(settings.scheduler_timezone)
+    except (ZoneInfoNotFoundError, ValueError):
+        logger.warning("invalid_scheduler_timezone_fallback_utc", extra={"scheduler_timezone": settings.scheduler_timezone})
+        return timezone.utc
 
 
 def _resolve_delivery_context(db) -> dict[str, str | None]:
@@ -108,7 +117,7 @@ def _notify_missing_checkins() -> None:
             return
 
         message = (
-            "Fala ai... check-in pendente para: "
+            "Fala ai... resposta pendente para: "
             + ", ".join(user.name for user in report.missing_users[:10])
         )
         context = (
@@ -145,6 +154,8 @@ def _notify_missing_checkins() -> None:
 
 
 def sync_fala_ai_jobs(db, scheduler: BaseScheduler) -> None:
+    scheduler_tz = _scheduler_tz()
+
     for job in scheduler.get_jobs():
         if job.id.startswith(JOB_PREFIX) or job.id == MISSING_CHECKIN_JOB_ID:
             scheduler.remove_job(job.id)
@@ -152,8 +163,9 @@ def sync_fala_ai_jobs(db, scheduler: BaseScheduler) -> None:
     reminders = db.query(FalaAiReminder).filter(FalaAiReminder.ativo.is_(True)).all()
 
     for reminder in reminders:
-        cron = f"{reminder.horario.minute} {reminder.horario.hour} * * 1-5"
-        trigger = CronTrigger.from_crontab(cron, timezone=timezone.utc)
+        weekdays = str(getattr(reminder, "dias_semana", "") or "1,2,3,4,5")
+        cron = f"{reminder.horario.minute} {reminder.horario.hour} * * {weekdays}"
+        trigger = CronTrigger.from_crontab(cron, timezone=scheduler_tz)
         scheduler.add_job(
             _send_reminder,
             trigger=trigger,
@@ -163,7 +175,7 @@ def sync_fala_ai_jobs(db, scheduler: BaseScheduler) -> None:
         )
 
     if settings.fala_ai_missing_checkin_cron:
-        trigger = CronTrigger.from_crontab(settings.fala_ai_missing_checkin_cron, timezone=timezone.utc)
+        trigger = CronTrigger.from_crontab(settings.fala_ai_missing_checkin_cron, timezone=scheduler_tz)
         scheduler.add_job(
             _notify_missing_checkins,
             trigger=trigger,

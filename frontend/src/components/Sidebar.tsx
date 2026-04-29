@@ -10,6 +10,7 @@ import {
   Bot,
   MessageCircle,
   LogOut,
+  Trophy,
 } from 'lucide-react';
 import { useAuth } from '../app/auth';
 
@@ -167,6 +168,118 @@ export const Sidebar: React.FC = () => {
             <>
               <Bot className={isActive ? 'text-primary' : 'text-slate-400 group-hover:text-primary'} size={20} />
               <p className={`text-sm ${isActive ? 'font-bold text-slate-900' : 'font-medium text-slate-600 group-hover:text-slate-900'} transition-colors`}>Rotinas</p>
+            </>
+          )}
+        </NavLink>
+
+        <div className="mt-2 px-3 py-2 text-[11px] font-bold uppercase tracking-wide text-slate-400">
+          Avaliacao
+        </div>
+
+        <NavLink
+          to="/evaluation/cycles"
+          className={({ isActive }) =>
+            `${linkBase} ${
+              isActive
+                ? 'bg-blue-50 border-primary'
+                : 'hover:bg-slate-50 border-transparent'
+            }`
+          }
+        >
+          {({ isActive }) => (
+            <>
+              <Trophy className={isActive ? 'text-primary' : 'text-slate-400 group-hover:text-primary'} size={20} />
+              <p className={`text-sm ${isActive ? 'font-bold text-slate-900' : 'font-medium text-slate-600 group-hover:text-slate-900'} transition-colors`}>Ciclos</p>
+            </>
+          )}
+        </NavLink>
+
+        <NavLink
+          to="/evaluation/scoring"
+          className={({ isActive }) =>
+            `${linkBase} ${
+              isActive
+                ? 'bg-blue-50 border-primary'
+                : 'hover:bg-slate-50 border-transparent'
+            }`
+          }
+        >
+          {({ isActive }) => (
+            <>
+              <Trophy className={isActive ? 'text-primary' : 'text-slate-400 group-hover:text-primary'} size={20} />
+              <p className={`text-sm ${isActive ? 'font-bold text-slate-900' : 'font-medium text-slate-600 group-hover:text-slate-900'} transition-colors`}>Pontuacao</p>
+            </>
+          )}
+        </NavLink>
+
+        <NavLink
+          to="/evaluation/imports"
+          className={({ isActive }) =>
+            `${linkBase} ${
+              isActive
+                ? 'bg-blue-50 border-primary'
+                : 'hover:bg-slate-50 border-transparent'
+            }`
+          }
+        >
+          {({ isActive }) => (
+            <>
+              <Trophy className={isActive ? 'text-primary' : 'text-slate-400 group-hover:text-primary'} size={20} />
+              <p className={`text-sm ${isActive ? 'font-bold text-slate-900' : 'font-medium text-slate-600 group-hover:text-slate-900'} transition-colors`}>CSV e IA</p>
+            </>
+          )}
+        </NavLink>
+
+        <NavLink
+          to="/evaluation/ai-report"
+          className={({ isActive }) =>
+            `${linkBase} ${
+              isActive
+                ? 'bg-blue-50 border-primary'
+                : 'hover:bg-slate-50 border-transparent'
+            }`
+          }
+        >
+          {({ isActive }) => (
+            <>
+              <Trophy className={isActive ? 'text-primary' : 'text-slate-400 group-hover:text-primary'} size={20} />
+              <p className={`text-sm ${isActive ? 'font-bold text-slate-900' : 'font-medium text-slate-600 group-hover:text-slate-900'} transition-colors`}>Relatório IA</p>
+            </>
+          )}
+        </NavLink>
+
+        <NavLink
+          to="/evaluation/calibration"
+          className={({ isActive }) =>
+            `${linkBase} ${
+              isActive
+                ? 'bg-blue-50 border-primary'
+                : 'hover:bg-slate-50 border-transparent'
+            }`
+          }
+        >
+          {({ isActive }) => (
+            <>
+              <Trophy className={isActive ? 'text-primary' : 'text-slate-400 group-hover:text-primary'} size={20} />
+              <p className={`text-sm ${isActive ? 'font-bold text-slate-900' : 'font-medium text-slate-600 group-hover:text-slate-900'} transition-colors`}>Calibracao</p>
+            </>
+          )}
+        </NavLink>
+
+        <NavLink
+          to="/evaluation/final-list"
+          className={({ isActive }) =>
+            `${linkBase} ${
+              isActive
+                ? 'bg-blue-50 border-primary'
+                : 'hover:bg-slate-50 border-transparent'
+            }`
+          }
+        >
+          {({ isActive }) => (
+            <>
+              <Trophy className={isActive ? 'text-primary' : 'text-slate-400 group-hover:text-primary'} size={20} />
+              <p className={`text-sm ${isActive ? 'font-bold text-slate-900' : 'font-medium text-slate-600 group-hover:text-slate-900'} transition-colors`}>Lista final</p>
             </>
           )}
         </NavLink>
