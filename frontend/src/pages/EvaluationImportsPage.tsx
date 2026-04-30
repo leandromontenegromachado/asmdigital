@@ -1,4 +1,5 @@
-﻿import { useEffect, useMemo, useState } from 'react';
+﻿import { useEffect, useMemo, useRef, useState } from 'react';
+import { BarChart2, CheckCircle2, ChevronDown, CloudUpload, FileText, FileUp, Sparkles, Users } from 'lucide-react';
 import { AppShell } from '../components/AppShell';
 import {
   confirmImport,
@@ -33,7 +34,25 @@ const mappingFields = [
   ['improvement_comment', 'Pontos de melhoria'],
   ['general_comment', 'Comentário geral'],
   ['submitted_at', 'Data de envio'],
-];
+] as const;
+
+const mappingGroups = [
+  {
+    title: 'Identificadores',
+    fields: ['evaluated_email', 'evaluated_name', 'relation_type', 'evaluator_email', 'evaluator_name', 'submitted_at'],
+  },
+  {
+    title: 'Competências & notas',
+    fields: ['general_score', 'communication_score', 'teamwork_score', 'commitment_score', 'autonomy_score', 'quality_score', 'problem_solving_score'],
+  },
+  {
+    title: 'Campos qualitativos (textos longos)',
+    fields: ['strengths_comment', 'improvement_comment', 'general_comment'],
+  },
+] as const;
+
+const requiredMappingFields = new Set(['evaluated_name', 'evaluator_email']);
+const fieldLabels = Object.fromEntries(mappingFields) as Record<string, string>;
 
 const repairMojibake = (value: string) => {
   if (!/[ÃÂ]/.test(value)) return value;
@@ -84,6 +103,16 @@ const inferMapping = (headers: string[]) => {
   };
 };
 
+const stepItems = ['Enviar', 'Validar', 'Confirmar', 'Rodar IA'];
+
+const getStepState = (selectedImport: EvaluationImport | undefined, hasImportedReviews: boolean) => {
+  if (hasImportedReviews) return 3;
+  if (!selectedImport) return 0;
+  if (selectedImport.status === 'VALIDATED') return 2;
+  if (selectedImport.status === 'MAPPED') return 1;
+  return 0;
+};
+
 export default function EvaluationImportsPage() {
   const [cycles, setCycles] = useState<EvaluationCycle[]>([]);
   const [cycleId, setCycleId] = useState<number | null>(null);
@@ -98,6 +127,11 @@ export default function EvaluationImportsPage() {
   const [message, setMessage] = useState('');
   const [loading, setLoading] = useState(false);
 
+  const mainFileRef = useRef<HTMLInputElement>(null);
+  const rpmFileRef = useRef<HTMLInputElement>(null);
+  const ihpeFileRef = useRef<HTMLInputElement>(null);
+  const rhFileRef = useRef<HTMLInputElement>(null);
+
   const selectedImport = useMemo(
     () => imports.find((item) => item.id === selectedImportId) || imports[0],
     [imports, selectedImportId]
@@ -108,6 +142,7 @@ export default function EvaluationImportsPage() {
     && selectedImport.status !== 'IMPORTED'
     && selectedImport.valid_rows > 0
   );
+  const activeStep = getStepState(selectedImport, hasImportedReviews);
 
   const load = async () => {
     const loadedCycles = await listEvaluationCycles();
@@ -262,162 +297,130 @@ export default function EvaluationImportsPage() {
 
   return (
     <AppShell>
-      <div className="flex min-h-0 flex-col gap-6">
-        <div>
-          <p className="text-sm font-semibold uppercase tracking-wide text-blue-600">Avaliação final</p>
-          <h1 className="text-2xl font-bold text-slate-900">Importação CSV/Excel e IA qualitativa</h1>
-          <p className="mt-1 text-sm text-slate-500">
-            Importe respostas do Google Forms em CSV, XLSX ou XLS, mapeie colunas, valide linhas, crie avaliações 360 e gere análise qualitativa sem alterar notas.
-          </p>
-        </div>
-
-        {message && <div className="rounded-xl border border-blue-100 bg-blue-50 px-4 py-3 text-sm font-medium text-blue-800">{message}</div>}
-
-        <section className="grid gap-4 rounded-2xl bg-white p-5 shadow-soft lg:grid-cols-3">
-          <label className="flex flex-col gap-2 text-sm font-semibold text-slate-700">
-            Ciclo avaliativo
-            <select
-              className="rounded-xl border border-slate-200 px-3 py-2"
-              value={cycleId || ''}
-              onChange={(event) => handleCycleChange(Number(event.target.value))}
-            >
-              {cycles.map((cycle) => (
-                <option key={cycle.id} value={cycle.id}>{cycle.name}</option>
-              ))}
-            </select>
-          </label>
-
-          <label className="flex flex-col gap-2 text-sm font-semibold text-slate-700">
-            CSV/Excel Google Forms
-            <input className="rounded-xl border border-slate-200 px-3 py-2" type="file" accept=".csv,.xlsx,.xls,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel" onChange={(event) => setFile(event.target.files?.[0] || null)} />
-          </label>
-
-          <div className="flex items-end gap-2">
-            <button disabled={!file || !cycleId || loading} onClick={handleUpload} className="rounded-xl bg-blue-600 px-4 py-2 text-sm font-bold text-white disabled:opacity-50">
-              Enviar arquivo
-            </button>
-            <button disabled={!cycleId || loading || !hasImportedReviews} onClick={handleAi} className="rounded-xl border border-slate-200 px-4 py-2 text-sm font-bold text-slate-700 disabled:opacity-50" title={!hasImportedReviews ? 'Confirme a importação antes de rodar IA' : undefined}>
-              Rodar IA do ciclo
-            </button>
+      <div className="mx-auto flex w-full max-w-[1280px] flex-col gap-6 text-[#191c1e]">
+        <header>
+          <h1 className="text-2xl font-black tracking-tight text-[#0f172a]">Importação CSV/Excel e IA qualitativa</h1>
+          <div className="mt-4 flex items-center gap-0 overflow-x-auto pb-1">
+            {stepItems.map((item, index) => (
+              <div key={item} className="flex min-w-fit items-center">
+                <span className={`inline-flex h-6 w-6 items-center justify-center rounded-full text-[11px] font-black ${index <= activeStep ? 'bg-[#004ac6] text-white' : 'bg-[#e6e8ea] text-[#434654]'}`}>{index + 1}</span>
+                <span className={`ml-2 text-xs font-bold ${index <= activeStep ? 'text-[#003594]' : 'text-[#434654]'}`}>{item}</span>
+                {index < stepItems.length - 1 && <span className={`mx-3 h-px w-16 ${index < activeStep ? 'bg-[#004ac6]' : 'bg-[#c3c6d6]'}`} />}
+              </div>
+            ))}
           </div>
-        </section>
+        </header>
 
-        <section className="grid gap-3 rounded-2xl border border-blue-100 bg-blue-50 p-4 text-sm text-blue-950 lg:grid-cols-4">
-          <div><strong>1. Enviar</strong><br />Carrega o CSV/XLS.</div>
-          <div><strong>2. Validar</strong><br />Confere se as linhas estão corretas.</div>
-          <div><strong>3. Confirmar</strong><br />Cria as avaliações 360 no ciclo.</div>
-          <div><strong>4. Rodar IA</strong><br />Analisa os colaboradores importados.</div>
-        </section>
+        {message && (
+          <div className="rounded-2xl border border-[#b8c8ff] bg-[#eef3ff] px-5 py-3 text-sm font-semibold text-[#003594]">
+            {message}
+          </div>
+        )}
 
-        <section className="rounded-2xl bg-white p-5 shadow-soft">
-          <h2 className="text-lg font-bold text-slate-900">Planilhas complementares</h2>
-          <p className="mt-1 text-sm text-slate-500">
-            Use esta área para importar RPM, IHPE e RH. O sistema recalcula RPM/IHPE e atualiza a lista parcial/final.
-          </p>
-          <div className="mt-4 grid gap-4 lg:grid-cols-3">
-            <div className="rounded-xl border border-slate-200 p-4">
-              <h3 className="font-bold text-slate-800">RPM 2025/2026</h3>
-              <p className="mb-3 text-xs text-slate-500">Calcula horas em projetos / horas totais, excluindo genéricas e treinamento.</p>
-              <input type="file" accept=".xlsx,.xls" onChange={(event) => setRpmFile(event.target.files?.[0] || null)} className="w-full text-sm" />
-              <button disabled={!rpmFile || loading} onClick={() => handleOperationalUpload('rpm')} className="mt-3 rounded-lg bg-blue-600 px-3 py-2 text-sm font-bold text-white disabled:opacity-50">Importar RPM</button>
+        <section className="rounded-xl border border-[#c3c6d6] bg-white p-5 shadow-sm">
+          <div className="grid gap-5 lg:grid-cols-[1fr_2fr_auto] lg:items-end">
+            <label className="flex flex-col gap-2">
+              <span className="text-[11px] font-black uppercase tracking-[0.12em] text-[#434654]">Ciclo avaliativo</span>
+              <span className="relative">
+                <select className="h-12 w-full appearance-none rounded-lg border border-[#c3c6d6] bg-[#f2f4f6] px-4 pr-10 text-sm font-semibold text-[#191c1e] outline-none focus:border-[#004ac6] focus:ring-2 focus:ring-[#dbe1ff]" value={cycleId || ''} onChange={(event) => handleCycleChange(Number(event.target.value))}>
+                  {cycles.map((cycle) => <option key={cycle.id} value={cycle.id}>{cycle.name}</option>)}
+                </select>
+                <ChevronDown className="pointer-events-none absolute right-3 top-3.5 h-5 w-5 text-[#737685]" />
+              </span>
+            </label>
+
+            <div className="flex flex-col gap-2">
+              <span className="text-[11px] font-black uppercase tracking-[0.12em] text-[#434654]">Arquivo de dados</span>
+              <button type="button" onClick={() => mainFileRef.current?.click()} className="flex h-12 items-center justify-between rounded-lg border-2 border-dashed border-[#c3c6d6] bg-[#f2f4f6] px-4 text-left transition hover:bg-[#e6e8ea]">
+                <span className="flex min-w-0 items-center gap-3">
+                  <FileUp className="h-5 w-5 shrink-0 text-[#737685]" />
+                  <span className="truncate text-sm font-bold text-[#191c1e]">{file?.name || 'CSV/Excel Google Forms'}</span>
+                </span>
+                <span className="text-xs font-bold text-[#737685]">Procurar</span>
+              </button>
+              <input ref={mainFileRef} className="hidden" type="file" accept=".csv,.xlsx,.xls,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel" onChange={(event) => setFile(event.target.files?.[0] || null)} />
             </div>
-            <div className="rounded-xl border border-slate-200 p-4">
-              <h3 className="font-bold text-slate-800">IHPE 2025/2026</h3>
-              <p className="mb-3 text-xs text-slate-500">Recalcula mês a mês: entregáveis / horas trabalhadas, depois média dos meses.</p>
-              <input type="file" accept=".xlsx,.xls" onChange={(event) => setIhpeFile(event.target.files?.[0] || null)} className="w-full text-sm" />
-              <button disabled={!ihpeFile || loading} onClick={() => handleOperationalUpload('ihpe')} className="mt-3 rounded-lg bg-blue-600 px-3 py-2 text-sm font-bold text-white disabled:opacity-50">Importar IHPE</button>
-            </div>
-            <div className="rounded-xl border border-slate-200 p-4">
-              <h3 className="font-bold text-slate-800">ASM RH</h3>
-              <p className="mb-3 text-xs text-slate-500">Importa ANC, última promoção, admissão e elegibilidade por mérito.</p>
-              <input type="file" accept=".xlsx,.xls" onChange={(event) => setRhFile(event.target.files?.[0] || null)} className="w-full text-sm" />
-              <button disabled={!rhFile || loading} onClick={() => handleOperationalUpload('rh')} className="mt-3 rounded-lg bg-blue-600 px-3 py-2 text-sm font-bold text-white disabled:opacity-50">Importar RH</button>
+
+            <div className="flex flex-wrap gap-3 lg:flex-nowrap">
+              <button disabled={!file || !cycleId || loading} onClick={handleUpload} className="inline-flex h-12 items-center gap-2 rounded-lg bg-[#004ac6] px-5 text-sm font-black text-white shadow-sm transition hover:brightness-95 disabled:cursor-not-allowed disabled:opacity-50">
+                <CloudUpload className="h-4 w-4" />
+                Enviar arquivo
+              </button>
+              <button disabled={!cycleId || loading || !hasImportedReviews} onClick={handleAi} className="h-12 rounded-lg border border-[#c3c6d6] bg-white px-5 text-sm font-black text-[#191c1e] transition hover:bg-[#f2f4f6] disabled:cursor-not-allowed disabled:opacity-50" title={!hasImportedReviews ? 'Confirme a importação antes de rodar IA' : undefined}>
+                Rodar IA do ciclo
+              </button>
             </div>
           </div>
         </section>
 
-        <section className="grid gap-6 lg:grid-cols-[320px_1fr]">
-          <div className="rounded-2xl bg-white p-5 shadow-soft">
-            <h2 className="text-lg font-bold text-slate-900">Importações</h2>
-            <div className="mt-4 flex flex-col gap-3">
+        <section>
+          <h2 className="text-lg font-black text-[#191c1e]">Planilhas complementares</h2>
+          <div className="mt-4 grid gap-5 md:grid-cols-3">
+            <OperationalCard title="RPM 2025/2026" icon={<FileText className="h-5 w-5 text-[#46566c]" />} file={rpmFile} inputRef={rpmFileRef} onFileChange={setRpmFile} onImport={() => handleOperationalUpload('rpm')} disabled={!rpmFile || loading} />
+            <OperationalCard title="IHPE 2025/2026" icon={<BarChart2 className="h-5 w-5 text-[#46566c]" />} file={ihpeFile} inputRef={ihpeFileRef} onFileChange={setIhpeFile} onImport={() => handleOperationalUpload('ihpe')} disabled={!ihpeFile || loading} />
+            <OperationalCard title="ASM RH" icon={<Users className="h-5 w-5 text-[#46566c]" />} file={rhFile} inputRef={rhFileRef} onFileChange={setRhFile} onImport={() => handleOperationalUpload('rh')} disabled={!rhFile || loading} />
+          </div>
+        </section>
+
+        <section className="grid gap-6 lg:grid-cols-[300px_1fr]">
+          <aside className="h-fit overflow-hidden rounded-xl border border-[#c3c6d6] bg-white shadow-sm">
+            <div className="border-b border-[#c3c6d6] bg-[#f2f4f6] px-4 py-3">
+              <h2 className="text-lg font-black text-[#191c1e]">Importações</h2>
+            </div>
+            <div className="flex flex-col gap-2 p-3">
               {imports.map((item) => (
-                <button
-                  key={item.id}
-                  onClick={() => setSelectedImportId(item.id)}
-                  className={`rounded-xl border p-3 text-left text-sm ${selectedImport?.id === item.id ? 'border-blue-500 bg-blue-50' : 'border-slate-200 bg-white'}`}
-                >
-                  <p className="font-bold text-slate-900">{item.file_name}</p>
-                  <p className="text-slate-500">{item.status} · {item.total_rows} linhas · {item.valid_rows} válidas</p>
+                <button key={item.id} onClick={() => setSelectedImportId(item.id)} className={`flex items-start gap-3 rounded-lg border px-3 py-3 text-left transition ${selectedImport?.id === item.id ? 'border-[#004ac6]/30 bg-[#dbe1ff] text-[#003594]' : 'border-transparent text-[#434654] hover:bg-[#f2f4f6]'}`}>
+                  <FileText className={`mt-0.5 h-5 w-5 shrink-0 ${selectedImport?.id === item.id ? 'text-[#004ac6]' : 'text-[#737685]'}`} />
+                  <span className="min-w-0">
+                    <span className="block truncate text-sm font-black">{item.file_name}</span>
+                    <span className="mt-1 block text-xs opacity-80">{item.status} · {item.total_rows} linhas · {item.valid_rows} válidas</span>
+                  </span>
                 </button>
               ))}
-              {!imports.length && <p className="text-sm text-slate-500">Nenhuma importação enviada neste ciclo.</p>}
+              {!imports.length && <p className="rounded-lg bg-[#f2f4f6] px-3 py-4 text-sm font-semibold text-[#737685]">Nenhuma importação enviada neste ciclo.</p>}
             </div>
-          </div>
+          </aside>
 
-          <div className="rounded-2xl bg-white p-5 shadow-soft">
-            <div className="flex flex-col justify-between gap-4 xl:flex-row xl:items-center">
+          <div className="rounded-xl border border-[#c3c6d6] bg-white p-5 shadow-sm">
+            <div className="flex flex-col justify-between gap-4 border-b border-[#c3c6d6] pb-5 xl:flex-row xl:items-start">
               <div>
-                <h2 className="text-lg font-bold text-slate-900">Mapeamento de colunas</h2>
-                <p className="text-sm text-slate-500">Campos obrigatórios: nome do avaliado, e-mail/nome do avaliador e nota geral ou competências. Sem relação mapeada, assume PAR.</p>
+                <h2 className="text-xl font-black text-[#191c1e]">Mapeamento de colunas</h2>
+                <StatusPill selectedImport={selectedImport} validation={validation} />
               </div>
-              <div className="flex flex-wrap gap-2">
-                <button disabled={!selectedImport || loading} onClick={handleAutoMap} className="rounded-xl border border-blue-200 px-4 py-2 text-sm font-bold text-blue-700 disabled:opacity-50">Mapear automático</button>
-                <button disabled={!selectedImport || loading} onClick={handleMap} className="rounded-xl border border-slate-200 px-4 py-2 text-sm font-bold text-slate-700 disabled:opacity-50">Salvar mapa</button>
-                <button disabled={!selectedImport || loading || selectedImport.status === 'IMPORTED'} onClick={handleValidate} className="rounded-xl border border-slate-200 px-4 py-2 text-sm font-bold text-slate-700 disabled:opacity-50">Validar</button>
-                <button disabled={!canConfirmImport || loading} onClick={handleConfirm} className="rounded-xl bg-emerald-600 px-4 py-2 text-sm font-bold text-white disabled:opacity-50">Confirmar</button>
+              <div className="flex flex-wrap items-center gap-2">
+                <ActionButton disabled={!selectedImport || loading} onClick={handleAutoMap} variant="light"><Sparkles className="h-4 w-4" />Mapear automático</ActionButton>
+                <ActionButton disabled={!selectedImport || loading} onClick={handleMap} variant="light">Salvar mapa</ActionButton>
+                <ActionButton disabled={!selectedImport || loading || selectedImport.status === 'IMPORTED'} onClick={handleValidate} variant="soft">Validar</ActionButton>
+                <ActionButton disabled={!canConfirmImport || loading} onClick={handleConfirm} variant="primary">Confirmar</ActionButton>
               </div>
             </div>
-
-            {selectedImport?.status === 'IMPORTED' && (
-              <div className="mt-4 rounded-xl border border-emerald-100 bg-emerald-50 px-4 py-3 text-sm font-medium text-emerald-800">
-                Importação confirmada. As avaliações 360 já foram criadas; agora você pode rodar a IA do ciclo ou ir para Pontuação para gerar a lista parcial.
-              </div>
-            )}
-
-            {selectedImport?.status === 'VALIDATED' && (
-              <div className="mt-4 rounded-xl border border-amber-100 bg-amber-50 px-4 py-3 text-sm font-medium text-amber-800">
-                Arquivo validado, mas ainda não entrou no ciclo. Clique em Confirmar para criar as avaliações 360.
-              </div>
-            )}
 
             {selectedImport && (
-              <div className="mt-5 grid gap-3 md:grid-cols-2">
-                {mappingFields.map(([field, label]) => (
-                  <label key={field} className="flex flex-col gap-1 text-xs font-bold uppercase tracking-wide text-slate-500">
-                    {label}
-                    <select
-                      className="rounded-xl border border-slate-200 px-3 py-2 text-sm font-medium normal-case tracking-normal text-slate-700"
-                      value={mapping[field] || ''}
-                      onChange={(event) => setMapping((current) => ({ ...current, [field]: event.target.value }))}
-                    >
-                      <option value="">Não mapear</option>
-                      {selectedImport.headers.map((header) => (
-                        <option key={header} value={header}>{header}</option>
+              <div className="mt-6 space-y-7">
+                {mappingGroups.map((group) => (
+                  <div key={group.title}>
+                    <div className="mb-4 border-b border-[#c3c6d6]/70 pb-2">
+                      <h3 className="text-[11px] font-black uppercase tracking-[0.14em] text-[#434654]">{group.title}</h3>
+                    </div>
+                    <div className="grid gap-x-6 gap-y-5 md:grid-cols-2 xl:grid-cols-3">
+                      {group.fields.map((field) => (
+                        <MappingSelect key={field} field={field} label={fieldLabels[field]} required={requiredMappingFields.has(field)} value={mapping[field] || ''} headers={selectedImport.headers} onChange={(value) => setMapping((current) => ({ ...current, [field]: value }))} />
                       ))}
-                    </select>
-                  </label>
+                    </div>
+                  </div>
                 ))}
               </div>
             )}
 
             {validation && (
-              <div className="mt-6 rounded-xl border border-slate-200 p-4">
-                <h3 className="font-bold text-slate-900">Resultado da validação</h3>
-                <p className="mt-1 text-sm text-slate-600">{validation.valid_rows} linhas válidas · {validation.invalid_rows} linhas inválidas</p>
+              <div className="mt-6 rounded-xl border border-[#c3c6d6] p-4">
+                <h3 className="font-black text-[#191c1e]">Resultado da validação</h3>
+                <p className="mt-1 text-sm font-semibold text-[#434654]">{validation.valid_rows} linhas válidas · {validation.invalid_rows} linhas inválidas</p>
                 {validation.errors.length > 0 && (
-                  <div className="mt-3 max-h-64 overflow-auto rounded-lg bg-slate-50">
+                  <div className="mt-3 max-h-64 overflow-auto rounded-lg bg-[#f2f4f6]">
                     <table className="w-full text-left text-xs">
-                      <thead className="bg-slate-100 text-slate-500">
-                        <tr><th className="p-2">Linha</th><th className="p-2">Erro</th></tr>
-                      </thead>
-                      <tbody>
-                        {validation.errors.map((row) => (
-                          <tr key={row.id} className="border-t border-slate-200">
-                            <td className="p-2">{row.row_number}</td>
-                            <td className="p-2">{row.error_message}</td>
-                          </tr>
-                        ))}
-                      </tbody>
+                      <thead className="bg-[#e6e8ea] text-[#434654]"><tr><th className="p-2">Linha</th><th className="p-2">Erro</th></tr></thead>
+                      <tbody>{validation.errors.map((row) => <tr key={row.id} className="border-t border-[#c3c6d6]"><td className="p-2">{row.row_number}</td><td className="p-2">{row.error_message}</td></tr>)}</tbody>
                     </table>
                   </div>
                 )}
@@ -429,3 +432,72 @@ export default function EvaluationImportsPage() {
     </AppShell>
   );
 }
+
+function OperationalCard({ title, icon, file, inputRef, onFileChange, onImport, disabled }: {
+  title: string;
+  icon: React.ReactNode;
+  file: File | null;
+  inputRef: React.RefObject<HTMLInputElement>;
+  onFileChange: (file: File | null) => void;
+  onImport: () => void;
+  disabled: boolean;
+}) {
+  return (
+    <div className="flex flex-col gap-4 rounded-xl border border-[#c3c6d6] bg-white p-4 shadow-sm transition hover:shadow-md">
+      <div className="flex items-center justify-between">
+        <h3 className="text-base font-black text-[#191c1e]">{title}</h3>
+        {icon}
+      </div>
+      <button type="button" onClick={() => inputRef.current?.click()} className="rounded-lg border border-dashed border-[#c3c6d6] bg-[#f2f4f6] p-4 text-center text-xs font-bold text-[#737685] transition hover:bg-[#e6e8ea]">
+        {file?.name || 'Selecione o arquivo...'}
+      </button>
+      <input ref={inputRef} type="file" accept=".xlsx,.xls" className="hidden" onChange={(event) => onFileChange(event.target.files?.[0] || null)} />
+      <button disabled={disabled} onClick={onImport} className="h-10 rounded-lg border border-[#c3c6d6] bg-white text-sm font-black text-[#191c1e] transition hover:bg-[#f2f4f6] disabled:cursor-not-allowed disabled:opacity-50">Importar</button>
+    </div>
+  );
+}
+
+function StatusPill({ selectedImport, validation }: { selectedImport?: EvaluationImport; validation: ImportValidationResult | null }) {
+  if (!selectedImport) {
+    return <p className="mt-2 rounded-full bg-[#f2f4f6] px-3 py-1.5 text-sm font-semibold text-[#737685]">Envie um arquivo para iniciar o mapeamento.</p>;
+  }
+  if (selectedImport.status === 'IMPORTED') {
+    return <p className="mt-2 inline-flex items-center gap-2 rounded-full bg-emerald-50 px-3 py-1.5 text-sm font-bold text-emerald-700"><CheckCircle2 className="h-4 w-4" />Importação confirmada. A IA já pode ser executada.</p>;
+  }
+  if (validation || selectedImport.status === 'VALIDATED') {
+    return <p className="mt-2 inline-flex items-center gap-2 rounded-full bg-amber-50 px-3 py-1.5 text-sm font-bold text-amber-700"><CheckCircle2 className="h-4 w-4" />Arquivo validado. Confirme para criar as avaliações 360.</p>;
+  }
+  return <p className="mt-2 inline-flex items-center gap-2 rounded-full bg-[#dbe1ff] px-3 py-1.5 text-sm font-bold text-[#003594]"><CheckCircle2 className="h-4 w-4" />Mapeamento preparado. Revise antes de validar.</p>;
+}
+
+function ActionButton({ children, disabled, onClick, variant }: { children: React.ReactNode; disabled: boolean; onClick: () => void; variant: 'light' | 'soft' | 'primary' }) {
+  const className = variant === 'primary'
+    ? 'bg-[#004ac6] text-white shadow-sm hover:brightness-95'
+    : variant === 'soft'
+      ? 'border border-[#b8c8ff] bg-[#dbe1ff]/60 text-[#003594] hover:bg-[#dbe1ff]'
+      : 'border border-[#c3c6d6] bg-white text-[#191c1e] hover:bg-[#f2f4f6]';
+  return <button disabled={disabled} onClick={onClick} className={`inline-flex h-10 items-center gap-2 rounded-lg px-3 text-sm font-black transition disabled:cursor-not-allowed disabled:opacity-50 ${className}`}>{children}</button>;
+}
+
+function MappingSelect({ field, label, required, value, headers, onChange }: {
+  field: string;
+  label: string;
+  required: boolean;
+  value: string;
+  headers: string[];
+  onChange: (value: string) => void;
+}) {
+  return (
+    <label className="flex flex-col gap-1.5">
+      <span className="flex justify-between text-xs font-black text-[#191c1e]">
+        {label}
+        {required && <span className="text-red-600">*</span>}
+      </span>
+      <select className={`h-10 w-full rounded-md border bg-[#f2f4f6] px-3 text-sm font-semibold text-[#191c1e] outline-none focus:border-[#004ac6] focus:ring-1 focus:ring-[#004ac6] ${value ? 'border-[#9aa7cf]' : 'border-[#c3c6d6] text-[#737685]'}`} value={value} onChange={(event) => onChange(event.target.value)}>
+        <option value="">{field === 'submitted_at' || field === 'general_comment' ? '-- Selecionar coluna --' : 'Não mapear'}</option>
+        {headers.map((header) => <option key={header} value={header}>{header}</option>)}
+      </select>
+    </label>
+  );
+}
+
