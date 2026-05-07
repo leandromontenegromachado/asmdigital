@@ -105,6 +105,7 @@ class Automation(Base):
     next_run_at = Column(DateTime(timezone=True), nullable=True)
 
     runs = relationship("AutomationRun", back_populates="automation")
+    notification_rules = relationship("NotificationRule", back_populates="automation", cascade="all, delete-orphan")
 
 
 class AutomationRun(Base):
@@ -125,14 +126,61 @@ class Notification(Base):
     __tablename__ = "notifications"
 
     id = Column(Integer, primary_key=True, index=True)
+    execution_id = Column(Integer, ForeignKey("automation_runs.id"), nullable=True, index=True)
+    automation_id = Column(Integer, ForeignKey("automations.id"), nullable=True, index=True)
+    employee_id = Column(Integer, ForeignKey("employees.id"), nullable=True, index=True)
     channel = Column(String(80), nullable=False)
+    recipient = Column(String(200), nullable=True)
     to_ref = Column(String(200), nullable=True)
     subject = Column(String(200), nullable=True)
+    message = Column(Text, nullable=True)
     body = Column(Text, nullable=True)
     status = Column(String(40), nullable=False, default="pending")
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    data_envio = Column(DateTime(timezone=True), nullable=True)
     sent_at = Column(DateTime(timezone=True), nullable=True)
+    error = Column(Text, nullable=True)
+    attempts = Column(Integer, nullable=False, default=0)
     simulation = Column(Boolean, nullable=False, default=False)
+
+    execution = relationship("AutomationRun")
+    automation = relationship("Automation")
+    employee = relationship("Employee")
+
+
+class NotificationTemplate(Base):
+    __tablename__ = "notification_templates"
+
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String(200), nullable=False)
+    channel = Column(String(40), nullable=False, default="email")
+    subject = Column(String(200), nullable=True)
+    body = Column(Text, nullable=False)
+    is_active = Column(Boolean, nullable=False, default=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
+
+
+class NotificationRule(Base):
+    __tablename__ = "notification_rules"
+
+    id = Column(Integer, primary_key=True, index=True)
+    automation_id = Column(Integer, ForeignKey("automations.id"), nullable=False, index=True)
+    is_active = Column(Boolean, nullable=False, default=True)
+    send_condition = Column(String(120), nullable=True)
+    recipient_type = Column(String(60), nullable=False, default="responsavel")
+    preferred_channel = Column(String(40), nullable=False, default="email")
+    fallback_channel = Column(String(40), nullable=True)
+    template_id = Column(Integer, ForeignKey("notification_templates.id"), nullable=True)
+    requires_approval = Column(Boolean, nullable=False, default=False)
+    notify_manager = Column(Boolean, nullable=False, default=False)
+    manager_condition = Column(String(120), nullable=True)
+    params_json = Column(JSONB, nullable=False, default=dict)
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
+
+    automation = relationship("Automation", back_populates="notification_rules")
+    template = relationship("NotificationTemplate")
 
 
 class EvaluationCycle(Base):
@@ -165,10 +213,17 @@ class Employee(Base):
     id = Column(Integer, primary_key=True, index=True)
     name = Column(String(200), nullable=False)
     email = Column(String(200), nullable=False, unique=True, index=True)
+    teams_user_id = Column(String(200), nullable=True)
+    matricula = Column(String(80), nullable=True, unique=True, index=True)
+    cargo = Column(String(120), nullable=True)
+    setor = Column(String(120), nullable=True, index=True)
     department = Column(String(120), nullable=True, index=True)
     position = Column(String(120), nullable=True)
     manager_id = Column(Integer, ForeignKey("employees.id"), nullable=True)
     active = Column(Boolean, nullable=False, default=True)
+    recebe_notificacao = Column(Boolean, nullable=False, default=True)
+    participa_avaliacao = Column(Boolean, nullable=False, default=True)
+    canal_preferencial = Column(String(40), nullable=False, default="email")
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
 
@@ -393,6 +448,8 @@ __all__ = [
     "Automation",
     "AutomationRun",
     "Notification",
+    "NotificationRule",
+    "NotificationTemplate",
     "EvaluationCycle",
     "Employee",
     "EmployeeRhData",

@@ -108,11 +108,18 @@ def _employee_out(employee: Employee) -> EmployeeOut:
         id=employee.id,
         name=employee.name,
         email=employee.email,
+        teams_user_id=employee.teams_user_id,
+        matricula=employee.matricula,
+        cargo=employee.cargo,
+        setor=employee.setor,
         department=employee.department,
         position=employee.position,
         manager_id=employee.manager_id,
         manager_name=employee.manager.name if employee.manager else None,
         active=employee.active,
+        recebe_notificacao=employee.recebe_notificacao,
+        participa_avaliacao=employee.participa_avaliacao,
+        canal_preferencial=employee.canal_preferencial,
         created_at=employee.created_at,
         updated_at=employee.updated_at,
     )
@@ -294,7 +301,12 @@ def list_employees(
 
 @router.post("/employees", response_model=EmployeeOut, status_code=status.HTTP_201_CREATED)
 def create_employee(payload: EmployeeCreate, db: Session = Depends(get_db), admin: User = Depends(require_admin)):
-    employee = Employee(**payload.model_dump())
+    data = payload.model_dump()
+    if data.get("setor") and not data.get("department"):
+        data["department"] = data["setor"]
+    if data.get("cargo") and not data.get("position"):
+        data["position"] = data["cargo"]
+    employee = Employee(**data)
     db.add(employee)
     db.flush()
     _audit(db, admin, "CREATE_EMPLOYEE", "employees", employee.id, None, payload.model_dump(mode="json"))
@@ -315,6 +327,10 @@ def update_employee(employee_id: int, payload: EmployeeUpdate, db: Session = Dep
     old = {key: getattr(employee, key) for key in data}
     for key, value in data.items():
         setattr(employee, key, value)
+    if "setor" in data and "department" not in data:
+        employee.department = data["setor"]
+    if "cargo" in data and "position" not in data:
+        employee.position = data["cargo"]
     _audit(db, admin, "UPDATE_EMPLOYEE", "employees", employee.id, old, data)
     db.commit()
     db.refresh(employee)

@@ -14,6 +14,7 @@ from app.api.routers.prompt_reports import router as prompt_reports_router
 from app.api.routers.azure_devops import router as azure_devops_router
 from app.api.routers.fala_ai import router as fala_ai_router
 from app.api.routers.evaluation import router as evaluation_router
+from app.api.routers.notifications import router as notifications_router
 from app.scheduler import start_scheduler, shutdown_scheduler
 
 configure_logging()
@@ -55,3 +56,4 @@ app.include_router(users_router, prefix=settings.api_prefix)
 app.include_router(azure_devops_router, prefix=settings.api_prefix)
 app.include_router(fala_ai_router, prefix=settings.api_prefix)
 app.include_router(evaluation_router, prefix=settings.api_prefix)
+app.include_router(notifications_router, prefix=settings.api_prefix)

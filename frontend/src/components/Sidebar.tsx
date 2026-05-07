@@ -172,6 +172,42 @@ export const Sidebar: React.FC = () => {
           )}
         </NavLink>
 
+        <NavLink
+          to="/notificacoes"
+          className={({ isActive }) =>
+            `${linkBase} ${
+              isActive
+                ? 'bg-blue-50 border-primary'
+                : 'hover:bg-slate-50 border-transparent'
+            }`
+          }
+        >
+          {({ isActive }) => (
+            <>
+              <Bell className={isActive ? 'text-primary' : 'text-slate-400 group-hover:text-primary'} size={20} />
+              <p className={`text-sm ${isActive ? 'font-bold text-slate-900' : 'font-medium text-slate-600 group-hover:text-slate-900'} transition-colors`}>Notificações</p>
+            </>
+          )}
+        </NavLink>
+
+        <NavLink
+          to="/funcionarios"
+          className={({ isActive }) =>
+            `${linkBase} ${
+              isActive
+                ? 'bg-blue-50 border-primary'
+                : 'hover:bg-slate-50 border-transparent'
+            }`
+          }
+        >
+          {({ isActive }) => (
+            <>
+              <Users className={isActive ? 'text-primary' : 'text-slate-400 group-hover:text-primary'} size={20} />
+              <p className={`text-sm ${isActive ? 'font-bold text-slate-900' : 'font-medium text-slate-600 group-hover:text-slate-900'} transition-colors`}>Funcionários</p>
+            </>
+          )}
+        </NavLink>
+
         <div className="mt-2 px-3 py-2 text-[11px] font-bold uppercase tracking-wide text-slate-400">
           Avaliacao
         </div>

@@ -10,6 +10,8 @@ import PromptReportsPage from '../pages/PromptReportsPage';
 import MappingsPage from '../pages/MappingsPage';
 import UsersPage from '../pages/UsersPage';
 import RoutinesPage from '../pages/RoutinesPage';
+import EmployeesPage from '../pages/EmployeesPage';
+import NotificationsPage from '../pages/NotificationsPage';
 import FalaAiPage from '../pages/FalaAiPage';
 import EvaluationCyclesPage from '../pages/EvaluationCyclesPage';
 import EvaluationAiReportPage from '../pages/EvaluationAiReportPage';
@@ -39,6 +41,10 @@ export const router = createBrowserRouter([
       { path: 'automation', element: <RoutinesPage /> },
       { path: 'routines', element: <RoutinesPage /> },
       { path: 'rotinas', element: <RoutinesPage /> },
+      { path: 'employees', element: <EmployeesPage /> },
+      { path: 'funcionarios', element: <EmployeesPage /> },
+      { path: 'notifications', element: <NotificationsPage /> },
+      { path: 'notificacoes', element: <NotificationsPage /> },
       { path: 'settings/mappings', element: <MappingsPage /> },
       { path: 'settings/users', element: <UsersPage /> },
       { path: 'evaluation/cycles', element: <EvaluationCyclesPage /> },

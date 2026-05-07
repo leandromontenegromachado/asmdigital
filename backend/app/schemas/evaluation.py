@@ -61,10 +61,17 @@ class EvaluationCycleOut(EvaluationCycleBase):
 class EmployeeBase(BaseModel):
     name: str = Field(min_length=2, max_length=200)
     email: EmailStr
+    teams_user_id: str | None = None
+    matricula: str | None = None
+    cargo: str | None = None
+    setor: str | None = None
     department: str | None = None
     position: str | None = None
     manager_id: int | None = None
     active: bool = True
+    recebe_notificacao: bool = True
+    participa_avaliacao: bool = True
+    canal_preferencial: str = "email"
 
 
 class EmployeeCreate(EmployeeBase):
@@ -74,10 +81,17 @@ class EmployeeCreate(EmployeeBase):
 class EmployeeUpdate(BaseModel):
     name: str | None = Field(default=None, min_length=2, max_length=200)
     email: EmailStr | None = None
+    teams_user_id: str | None = None
+    matricula: str | None = None
+    cargo: str | None = None
+    setor: str | None = None
     department: str | None = None
     position: str | None = None
     manager_id: int | None = None
     active: bool | None = None
+    recebe_notificacao: bool | None = None
+    participa_avaliacao: bool | None = None
+    canal_preferencial: str | None = None
 
 
 class EmployeeOut(EmployeeBase):

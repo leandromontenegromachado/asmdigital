@@ -17,6 +17,7 @@ from sqlalchemy.orm import Session
 from app.core.config import settings
 from app.db.session import SessionLocal
 from app.models import Automation, AutomationRun, Connector, PromptReportTemplate, Report
+from app.services.notification_service import send_notifications_for_automation_run
 from app.services.azure_devops_service import AZURE_CONNECTOR_TYPES, query_snapshot
 from app.services.prompt_report_service import run_prompt_report_template
 from app.services.report_service import generate_redmine_report
@@ -609,6 +610,20 @@ def run_automation(db: Session, automation: Automation, simulation: bool = False
     db.refresh(run)
 
     try:
+        actionable_notifications = send_notifications_for_automation_run(db, automation, run, simulation=simulation)
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("automation_actionable_notifications_failed", extra={"automation_id": automation.id, "run_id": run.id, "error": str(exc)})
+        actionable_notification_summary = {"status": "failed", "error": str(exc)}
+    else:
+        actionable_notification_summary = {
+            "status": "processed",
+            "total": len(actionable_notifications),
+            "sent": len([item for item in actionable_notifications if item.status == "enviado"]),
+            "errors": len([item for item in actionable_notifications if item.status == "erro"]),
+            "pending_approval": len([item for item in actionable_notifications if item.status == "aguardando_aprovacao"]),
+        }
+
+    try:
         notification = _send_automation_email(automation, run, task_results)
     except Exception as exc:  # noqa: BLE001
         logger.exception("automation_email_failed", extra={"automation_id": automation.id, "run_id": run.id, "error": str(exc)})
@@ -618,6 +633,14 @@ def run_automation(db: Session, automation: Automation, simulation: bool = False
         run.summary_json = {
             **(run.summary_json or {}),
             "notification": notification,
+            "actionable_notifications": actionable_notification_summary,
+        }
+        db.commit()
+        db.refresh(run)
+    elif actionable_notification_summary:
+        run.summary_json = {
+            **(run.summary_json or {}),
+            "actionable_notifications": actionable_notification_summary,
         }
         db.commit()
         db.refresh(run)

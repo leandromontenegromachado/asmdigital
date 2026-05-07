@@ -23,11 +23,18 @@ export interface Employee {
   id: number;
   name: string;
   email: string;
+  teams_user_id?: string | null;
+  matricula?: string | null;
+  cargo?: string | null;
+  setor?: string | null;
   department: string | null;
   position: string | null;
   manager_id: number | null;
   manager_name: string | null;
   active: boolean;
+  recebe_notificacao?: boolean;
+  participa_avaliacao?: boolean;
+  canal_preferencial?: string;
   created_at: string;
   updated_at: string;
 }
@@ -220,10 +227,17 @@ export const listEmployees = async (params?: { department?: string; manager_id?:
 export const createEmployee = async (payload: {
   name: string;
   email: string;
+  teams_user_id?: string | null;
+  matricula?: string | null;
+  cargo?: string | null;
+  setor?: string | null;
   department?: string | null;
   position?: string | null;
   manager_id?: number | null;
   active?: boolean;
+  recebe_notificacao?: boolean;
+  participa_avaliacao?: boolean;
+  canal_preferencial?: string;
 }) => (await api.post<Employee>('/employees', payload)).data;
 
 export const updateEmployee = async (id: number, payload: Partial<Employee>) =>
