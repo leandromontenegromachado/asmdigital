@@ -3,12 +3,15 @@ from __future__ import annotations
 import logging
 import re
 from datetime import date, datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
 from typing import Any
 
 from apscheduler.schedulers.base import BaseScheduler
 from apscheduler.triggers.cron import CronTrigger
 from sqlalchemy.orm import Session
 
+from app.core.config import settings
+from app.adapters.redmine import RedmineAdapter
 from app.db.session import SessionLocal
 from app.models import Connector, PromptReportTemplate, Report
 from app.services.report_service import generate_redmine_report
@@ -29,7 +32,104 @@ def _parse_date_token(token: str) -> date | None:
 
 
 def _project_ids_from_text(value: str) -> list[str]:
-    return [item.strip().lower() for item in value.split(",") if item.strip()]
+    projects = []
+    for item in value.split(","):
+        project = item.strip().strip("{} ").lower()
+        if _is_placeholder_project(project):
+            continue
+        projects.append(project)
+    return projects
+
+
+def _normalize_project_ids(value: Any) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    return [
+        str(item).strip().lower()
+        for item in value
+        if str(item).strip() and not _is_placeholder_project(str(item))
+    ]
+
+
+def _is_placeholder_project(project_id: str) -> bool:
+    normalized = project_id.strip().strip("{} ").lower()
+    return (
+        not normalized
+        or normalized in {
+            "opcional",
+            "optional",
+            "projetomodelo",
+            "projeto-modelo",
+            "projectmodel",
+            "project-model",
+            "padrao_do_conector",
+            "padrao-do-conector",
+        }
+        or "projeto" in normalized
+        or re.fullmatch(r"projeto\d*", normalized) is not None
+        or re.fullmatch(r"project\d*", normalized) is not None
+    )
+
+
+def _default_project_ids(connector: Connector) -> list[str]:
+    return _normalize_project_ids((connector.config_json or {}).get("project_ids", []))
+
+
+def _should_use_saved_query(prompt: str) -> bool:
+    lowered = prompt.lower()
+    return "consulta salva" in lowered or "query salva" in lowered or "queries salvas" in lowered
+
+
+def _prompt_columns(prompt: str) -> list[dict[str, str]]:
+    lowered = prompt.lower()
+    columns: list[dict[str, str]] = [{"key": "source_ref", "label": "ID"}]
+    candidates = [
+        ("subject", "Titulo", ("titulo", "título", "assunto", "demanda")),
+        ("assigned_to", "Atribuido para", ("atribuido", "atribuído", "responsavel", "responsável")),
+        ("due_date", "Data prevista", ("data prevista", "prevista", "vencimento")),
+        ("updated_on", "Alterado em", ("alterado", "atualizado", "modificado")),
+        ("status", "Status", ("status", "situacao", "situação")),
+        ("priority", "Prioridade", ("prioridade",)),
+        ("tracker", "Tipo", ("tipo", "tracker")),
+        ("author", "Autor", ("autor", "solicitante")),
+        ("done_ratio", "% concluido", ("concluido", "concluído", "percentual", "%")),
+    ]
+    for key, label, terms in candidates:
+        if any(term in lowered for term in terms):
+            columns.append({"key": key, "label": label})
+    if not any(item["key"] == "subject" for item in columns):
+        columns.append({"key": "subject", "label": "Titulo"})
+    return columns
+
+
+def _score_query_name(prompt: str, query: dict[str, Any]) -> int:
+    name = str(query.get("name", "")).lower()
+    prompt_words = {word for word in re.findall(r"[a-zA-Z0-9_À-ÿ-]{4,}", prompt.lower())}
+    return sum(1 for word in prompt_words if word in name)
+
+
+def _select_saved_query(connector: Connector, project_ids: list[str], prompt: str) -> str | None:
+    base_url = (connector.config_json or {}).get("base_url")
+    api_key = (connector.config_json or {}).get("api_key")
+    if not base_url or not api_key:
+        return None
+
+    adapter = RedmineAdapter(base_url=base_url, api_key=api_key)
+    candidates: list[dict[str, Any]] = []
+    projects = project_ids or _default_project_ids(connector) or [None]
+    for project_id in projects:
+        try:
+            candidates.extend(adapter.fetch_queries(project_id=project_id))
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("failed_to_load_saved_queries", extra={"project_id": project_id, "error": str(exc)})
+
+    if not candidates:
+        return None
+    candidates.sort(key=lambda query: _score_query_name(prompt, query), reverse=True)
+    if _score_query_name(prompt, candidates[0]) == 0:
+        return None
+    query_id = candidates[0].get("id")
+    return str(query_id) if query_id is not None else None
 
 
 def _default_date_range() -> tuple[date, date]:
@@ -39,11 +139,12 @@ def _default_date_range() -> tuple[date, date]:
 
 def _parse_prompt_filters(prompt: str, defaults: dict[str, Any]) -> dict[str, Any]:
     output = {
-        "project_ids": [str(item).strip().lower() for item in defaults.get("project_ids", []) if str(item).strip()],
+        "project_ids": _normalize_project_ids(defaults.get("project_ids", [])),
         "status_id": defaults.get("status_id"),
         "query_id": str(defaults.get("query_id")) if defaults.get("query_id") is not None else None,
         "start_date": _parse_date_token(str(defaults["start_date"])) if defaults.get("start_date") else None,
         "end_date": _parse_date_token(str(defaults["end_date"])) if defaults.get("end_date") else None,
+        "prompt_options": {},
     }
 
     lowered = prompt.lower()
@@ -52,13 +153,15 @@ def _parse_prompt_filters(prompt: str, defaults: dict[str, Any]) -> dict[str, An
     if query_match:
         output["query_id"] = query_match.group(1)
 
-    project_match = re.search(r"projetos?\s*[:=]\s*([a-zA-Z0-9_,\-\s]+)", prompt, flags=re.IGNORECASE)
+    project_match = re.search(r"projetos?\s*[:=]\s*([^\r\n]+)", prompt, flags=re.IGNORECASE)
     if project_match:
-        output["project_ids"] = _project_ids_from_text(project_match.group(1))
+        parsed_projects = _project_ids_from_text(project_match.group(1))
+        if parsed_projects:
+            output["project_ids"] = parsed_projects
 
     if "fechado" in lowered or "fechados" in lowered:
         output["status_id"] = "closed"
-    elif "aberto" in lowered or "abertos" in lowered:
+    elif "aberto" in lowered or "abertos" in lowered or "em execu" in lowered or "em andamento" in lowered:
         output["status_id"] = "open"
     elif "todos os status" in lowered or "qualquer status" in lowered:
         output["status_id"] = None
@@ -91,6 +194,18 @@ def _parse_prompt_filters(prompt: str, defaults: dict[str, Any]) -> dict[str, An
     if output["start_date"] > output["end_date"]:
         output["start_date"], output["end_date"] = output["end_date"], output["start_date"]
 
+    if "atras" in lowered or "data prevista menor" in lowered or "vencid" in lowered:
+        output["prompt_options"] = {
+            **output["prompt_options"],
+            "overdue_only": True,
+            "sort_overdue_first": True,
+        }
+
+    output["prompt_options"] = {
+        **output["prompt_options"],
+        "columns": _prompt_columns(prompt),
+    }
+
     return output
 
 
@@ -103,8 +218,9 @@ def validate_cron_expression(cron_expression: str | None) -> None:
 def _next_run_from_cron(cron_expression: str | None) -> datetime | None:
     if not cron_expression:
         return None
-    trigger = CronTrigger.from_crontab(cron_expression, timezone=timezone.utc)
-    return trigger.get_next_fire_time(previous_fire_time=None, now=datetime.now(timezone.utc))
+    schedule_timezone = ZoneInfo(settings.scheduler_timezone)
+    trigger = CronTrigger.from_crontab(cron_expression, timezone=schedule_timezone)
+    return trigger.get_next_fire_time(previous_fire_time=None, now=datetime.now(schedule_timezone))
 
 
 def run_prompt_report_template(
@@ -116,14 +232,30 @@ def run_prompt_report_template(
     connector = db.query(Connector).filter(Connector.id == template.connector_id).first()
     if not connector:
         raise ValueError("Connector not found for template")
+    if connector.type != "redmine":
+        raise ValueError("O template deve usar um conector do tipo Redmine.")
 
     effective_prompt = (prompt_override or template.prompt_text or "").strip()
     if not effective_prompt:
         raise ValueError("Prompt is required")
 
     filters = _parse_prompt_filters(effective_prompt, template.params_json or {})
+    if not filters["project_ids"]:
+        filters["project_ids"] = _default_project_ids(connector)
+    if not filters["query_id"] and _should_use_saved_query(effective_prompt):
+        filters["query_id"] = _select_saved_query(connector, filters["project_ids"], effective_prompt)
+        if not filters["query_id"]:
+            logger.info("saved_query_not_selected_falling_back_to_project_filters", extra={"template_id": template.id})
+    if filters["query_id"] and _should_use_saved_query(effective_prompt):
+        filters["prompt_options"] = {
+            **(filters.get("prompt_options") or {}),
+            "saved_query_scope": True,
+        }
     if not filters["project_ids"] and not filters["query_id"]:
-        raise ValueError("Prompt/defaults must define project_ids or query_id")
+        raise ValueError(
+            "Prompt/defaults must define project_ids or query_id. "
+            "Preencha Projetos padrao, Query padrao ou configure project_ids no conector."
+        )
 
     report = generate_redmine_report(
         db=db,
@@ -133,6 +265,7 @@ def run_prompt_report_template(
         end_date=filters["end_date"],
         status_id=filters["status_id"],
         query_id=filters["query_id"],
+        prompt_options=filters.get("prompt_options"),
     )
     report.params_json = {
         **(report.params_json or {}),
@@ -157,14 +290,15 @@ def sync_prompt_report_jobs(db: Session, scheduler: BaseScheduler) -> None:
             scheduler.remove_job(job.id)
 
     templates = db.query(PromptReportTemplate).order_by(PromptReportTemplate.id.asc()).all()
-    now_utc = datetime.now(timezone.utc)
+    schedule_timezone = ZoneInfo(settings.scheduler_timezone)
+    now = datetime.now(schedule_timezone)
     for template in templates:
         if not template.is_enabled or not template.schedule_cron:
             template.next_run_at = None
             continue
 
         try:
-            trigger = CronTrigger.from_crontab(template.schedule_cron, timezone=timezone.utc)
+            trigger = CronTrigger.from_crontab(template.schedule_cron, timezone=schedule_timezone)
         except ValueError:
             logger.warning("invalid_prompt_report_cron", extra={"template_id": template.id, "cron": template.schedule_cron})
             template.next_run_at = None
@@ -177,7 +311,7 @@ def sync_prompt_report_jobs(db: Session, scheduler: BaseScheduler) -> None:
             args=[template.id],
             replace_existing=True,
         )
-        template.next_run_at = trigger.get_next_fire_time(previous_fire_time=None, now=now_utc)
+        template.next_run_at = trigger.get_next_fire_time(previous_fire_time=None, now=now)
 
     db.commit()
 

@@ -1,18 +1,21 @@
 
 import React, { useEffect, useMemo, useState } from 'react';
 import { ArrowDown, ArrowUp, LayoutGrid, List, Play, Plus, RefreshCw, Save, Search, Settings2, Trash2, X } from 'lucide-react';
+import { useSearchParams } from 'react-router-dom';
 
 import { AppShell } from '../components/AppShell';
 import {
   Automation,
   AutomationRun,
   createAutomation,
+  deleteAutomation,
   listAutomations,
   listAutomationRuns,
   runAutomation,
   updateAutomation,
 } from '../api/automations';
-import { PromptReportTemplate, listPromptReportTemplates } from '../api/promptReports';
+import { PromptReportTemplate, listPromptReportRuns, listPromptReportTemplates, runPromptReportTemplate } from '../api/promptReports';
+import { Report } from '../api/reports';
 
 type ViewMode = 'grid' | 'list';
 type StatusFilter = 'all' | 'enabled' | 'paused';
@@ -47,6 +50,7 @@ type EditForm = {
   schedule_cron: string;
   is_enabled: boolean;
   simulation: boolean;
+  notification_email: string;
   tasks: TaskItem[];
 };
 
@@ -55,6 +59,7 @@ type CreateForm = {
   schedule_cron: string;
   is_enabled: boolean;
   simulation: boolean;
+  notification_email: string;
   tasks: TaskItem[];
 };
 
@@ -63,23 +68,16 @@ type ValidationState = {
   taskErrors: Record<string, string[]>;
 };
 
-const TARGET_TEMPLATE_NAME = 'pendencias abertas semanais';
-
 const formatDate = (value?: string | null) => {
-  if (!value) return 'Nao agendada';
+  if (!value) return 'Não agendada';
   return new Date(value).toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' });
 };
 
 const statusBadge = (automation: Automation) => (!automation.is_enabled ? 'bg-amber-100 text-amber-800' : 'bg-emerald-100 text-emerald-800');
 const statusLabel = (automation: Automation) => (automation.is_enabled ? 'Ativa' : 'Pausada');
+const templateStatusBadge = (template: PromptReportTemplate) => (!template.is_enabled ? 'bg-amber-100 text-amber-800' : 'bg-emerald-100 text-emerald-800');
+const templateStatusLabel = (template: PromptReportTemplate) => (template.is_enabled ? 'Ativa' : 'Pausada');
 const uid = () => `${Date.now()}-${Math.random().toString(16).slice(2)}`;
-const normalizeText = (value: string) =>
-  value
-    .normalize('NFD')
-    .replace(/[\u0300-\u036f]/g, '')
-    .toLowerCase()
-    .trim();
-
 const emptyTask = (type: TaskKind = 'redmine_report'): TaskItem => ({
   uid: uid(),
   type,
@@ -290,8 +288,8 @@ const validateRoutine = (name: string, scheduleCron: string, tasks: TaskItem[]):
       if (!Number.isFinite(value) || value <= 0) errors.push('Segundos deve ser maior que zero.');
     }
 
-    if (task.type === 'custom' && !task.custom_line.trim()) {
-      errors.push('Linha custom nao pode ser vazia.');
+  if (task.type === 'custom' && !task.custom_line.trim()) {
+      errors.push('Linha custom não pode ser vazia.');
     }
 
     if (errors.length > 0) {
@@ -349,7 +347,7 @@ const TaskEditor: React.FC<TaskEditorProps> = ({ tasks, onChange, taskErrors, pr
                 value={task.type}
                 onChange={(e) => updateTask(task.uid, { type: e.target.value as TaskKind })}
               >
-                <option value="redmine_report">Relatorio Redmine</option>
+                <option value="redmine_report">Relatório Redmine</option>
                 <option value="prompt_report">Prompt Report</option>
                 <option value="azure_devops_board">Azure DevOps Quadro</option>
                 <option value="webhook_post">Webhook</option>
@@ -450,9 +448,11 @@ const TaskEditor: React.FC<TaskEditorProps> = ({ tasks, onChange, taskErrors, pr
 };
 
 const RoutinesPage: React.FC = () => {
+  const [searchParams, setSearchParams] = useSearchParams();
   const [automations, setAutomations] = useState<Automation[]>([]);
   const [runs, setRuns] = useState<AutomationRun[]>([]);
   const [promptTemplatesCatalog, setPromptTemplatesCatalog] = useState<PromptReportTemplate[]>([]);
+  const [promptTemplateRuns, setPromptTemplateRuns] = useState<Record<number, Report[]>>({});
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -469,12 +469,15 @@ const RoutinesPage: React.FC = () => {
     name: '',
     schedule_cron: '',
     is_enabled: true,
-    simulation: true,
+    simulation: false,
+    notification_email: '',
     tasks: [emptyTask('redmine_report')],
   });
   const [createValidation, setCreateValidation] = useState<ValidationState>(emptyValidation());
   const [editValidation, setEditValidation] = useState<ValidationState>(emptyValidation());
   const [selectedRun, setSelectedRun] = useState<AutomationRun | null>(null);
+  const [selectedAutomationRuns, setSelectedAutomationRuns] = useState<Automation | null>(null);
+  const [selectedPromptTemplate, setSelectedPromptTemplate] = useState<PromptReportTemplate | null>(null);
 
   const loadData = async () => {
     setError(null);
@@ -483,9 +486,13 @@ const RoutinesPage: React.FC = () => {
       listAutomationRuns(),
       listPromptReportTemplates(),
     ]);
+    const templateRunsPairs = await Promise.all(
+      templatesData.map(async (template) => [template.id, await listPromptReportRuns(template.id, 10)] as const),
+    );
     setAutomations(automationsData);
     setRuns(runsData);
     setPromptTemplatesCatalog(templatesData);
+    setPromptTemplateRuns(Object.fromEntries(templateRunsPairs));
   };
 
   useEffect(() => {
@@ -503,6 +510,13 @@ const RoutinesPage: React.FC = () => {
     bootstrap();
   }, []);
 
+  useEffect(() => {
+    const runId = Number(searchParams.get('run_id'));
+    if (!runId || !runs.length) return;
+    const run = runs.find((item) => item.id === runId);
+    if (run) setSelectedRun(run);
+  }, [runs, searchParams]);
+
   const filteredAutomations = useMemo(() => {
     const q = search.trim().toLowerCase();
     return automations.filter((item) => {
@@ -512,13 +526,58 @@ const RoutinesPage: React.FC = () => {
     });
   }, [automations, search, statusFilter]);
 
-  const filteredTemplatesCatalog = useMemo(
-    () =>
-      promptTemplatesCatalog.filter((template) =>
-        normalizeText(template.name).includes(TARGET_TEMPLATE_NAME),
-      ),
-    [promptTemplatesCatalog],
-  );
+  const filteredTemplatesCatalog = useMemo(() => promptTemplatesCatalog, [promptTemplatesCatalog]);
+  const scheduledPromptTemplates = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    return promptTemplatesCatalog.filter((template) => {
+      const matchesSearch = !q || template.name.toLowerCase().includes(q) || `prompt-${template.id}`.includes(q);
+      const matchesStatus = statusFilter === 'all' || (statusFilter === 'enabled' && template.is_enabled) || (statusFilter === 'paused' && !template.is_enabled);
+      return Boolean(template.schedule_cron) && matchesSearch && matchesStatus;
+    });
+  }, [promptTemplatesCatalog, search, statusFilter]);
+
+  const reportLinksFromRun = (run: AutomationRun) => {
+    const results = Array.isArray(run.summary_json?.results) ? run.summary_json.results : [];
+    return results
+      .map((result: any) => result?.data?.report_id)
+      .filter(Boolean)
+      .map((reportId: number | string) => ({
+        reportId,
+        url: `/reports/redmine-deliveries?report_id=${reportId}`,
+      }));
+  };
+
+  const latestExecutions = useMemo(() => {
+    const automationItems = runs.map((run) => ({
+      kind: 'automation' as const,
+      id: `automation-${run.id}`,
+      name: run.automation_name,
+      status: run.status,
+      startedAt: run.started_at,
+      finishedAt: run.finished_at,
+      reportId: reportLinksFromRun(run)[0]?.reportId,
+      summary: run.summary_json?.message || 'Ver detalhes',
+      run,
+    }));
+
+    const promptItems = promptTemplatesCatalog.flatMap((template) =>
+      (promptTemplateRuns[template.id] || []).map((report) => ({
+        kind: 'prompt_report' as const,
+        id: `prompt-${report.id}`,
+        name: template.name,
+        status: report.status,
+        startedAt: report.generated_at,
+        finishedAt: report.generated_at,
+        reportId: report.id,
+        summary: 'Relatório por linguagem natural',
+        run: null,
+      })),
+    );
+
+    return [...automationItems, ...promptItems]
+      .sort((a, b) => new Date(b.startedAt).getTime() - new Date(a.startedAt).getTime())
+      .slice(0, 50);
+  }, [promptTemplatesCatalog, promptTemplateRuns, runs]);
 
   const handleRefresh = async () => {
     setRefreshing(true);
@@ -538,9 +597,14 @@ const RoutinesPage: React.FC = () => {
     setError(null);
     setInfo(null);
     try {
-      const simulation = Boolean(automation.params_json?.simulation ?? true);
-      await runAutomation(automation.id, simulation);
+      const simulation = Boolean(automation.params_json?.simulation ?? false);
+      const run = await runAutomation(automation.id, simulation);
       await loadData();
+      setSelectedRun({
+        ...run,
+        automation_name: automation.name,
+        automation_key: automation.key,
+      });
       setInfo(`Rotina executada: ${automation.name}`);
     } catch (err: any) {
       setError(err?.response?.data?.detail || 'Falha ao executar rotina.');
@@ -555,7 +619,8 @@ const RoutinesPage: React.FC = () => {
       name: automation.name,
       schedule_cron: automation.schedule_cron || '',
       is_enabled: automation.is_enabled,
-      simulation: Boolean(automation.params_json?.simulation ?? true),
+      simulation: Boolean(automation.params_json?.simulation ?? false),
+      notification_email: automation.params_json?.notification_email || '',
       tasks: tasksFromParams(automation.params_json?.tasks),
     });
     setEditValidation(emptyValidation());
@@ -567,7 +632,8 @@ const RoutinesPage: React.FC = () => {
       name: '',
       schedule_cron: '',
       is_enabled: true,
-      simulation: true,
+      simulation: false,
+      notification_email: '',
       tasks: [emptyTask('redmine_report')],
     });
     setCreateValidation(emptyValidation());
@@ -592,6 +658,7 @@ const RoutinesPage: React.FC = () => {
         is_enabled: createForm.is_enabled,
         params_json: {
           simulation: createForm.simulation,
+          notification_email: createForm.notification_email.trim() || null,
           tasks: tasksToPayload(createForm.tasks),
         },
       });
@@ -624,6 +691,7 @@ const RoutinesPage: React.FC = () => {
         is_enabled: editForm.is_enabled,
         params_json: {
           simulation: editForm.simulation,
+          notification_email: editForm.notification_email.trim() || null,
           tasks: tasksToPayload(editForm.tasks),
         },
       });
@@ -650,13 +718,64 @@ const RoutinesPage: React.FC = () => {
     }
   };
 
+  const handleDeleteRoutine = async (automation: Automation) => {
+    const confirmed = window.confirm(`Excluir a rotina "${automation.name}" e suas execuções?`);
+    if (!confirmed) return;
+
+    setError(null);
+    setInfo(null);
+    try {
+      await deleteAutomation(automation.id);
+      setAutomations((prev) => prev.filter((item) => item.id !== automation.id));
+      setRuns((prev) => prev.filter((item) => item.automation_id !== automation.id));
+      setInfo(`Rotina excluida: ${automation.name}`);
+    } catch (err: any) {
+      setError(err?.response?.data?.detail || 'Falha ao excluir rotina.');
+    }
+  };
+
+  const handleViewAutomationRuns = (automation: Automation) => {
+    setSelectedAutomationRuns(automation);
+  };
+
+  const handleViewPromptTemplateRuns = (template: PromptReportTemplate) => {
+    setSelectedPromptTemplate(template);
+  };
+
+  const handleRunPromptTemplateNow = async (template: PromptReportTemplate) => {
+    const runKey = -template.id;
+    setRunningId(runKey);
+    setError(null);
+    setInfo(null);
+    try {
+      const result = await runPromptReportTemplate(template.id);
+      await loadData();
+      setInfo(`Relatório executado: ${template.name}`);
+      window.location.href = `/reports/redmine-deliveries?report_id=${result.report_id}`;
+    } catch (err: any) {
+      setError(err?.response?.data?.detail || 'Falha ao executar relatório agendado.');
+    } finally {
+      setRunningId(null);
+    }
+  };
+
+  const openRunDetail = (run: AutomationRun) => {
+    setSelectedRun(run);
+    setSearchParams({ run_id: String(run.id) });
+  };
+
+  const closeRunDetail = () => {
+    setSelectedRun(null);
+    setSearchParams({});
+  };
+
   return (
     <AppShell>
       <div className="w-full">
         <div className="mb-8 flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
           <div>
-            <h1 className="text-3xl font-extrabold tracking-tight text-gray-900">Gestao de Rotinas</h1>
-            <p className="mt-1 text-gray-500">Gerencie agendamento, estado e execucoes das automacoes do sistema.</p>
+            <h1 className="text-3xl font-extrabold tracking-tight text-gray-900">Gestão de Rotinas</h1>
+            <p className="mt-1 text-gray-500">Gerencie agendamento, estado e execuções das automações do sistema.</p>
           </div>
           <div className="flex gap-2">
             <button onClick={handleOpenCreate} className="inline-flex items-center justify-center rounded-lg bg-cyan-600 px-4 py-2.5 text-sm font-medium text-white hover:bg-cyan-700"><Plus className="mr-2 h-4 w-4" />Nova rotina</button>
@@ -688,55 +807,134 @@ const RoutinesPage: React.FC = () => {
         {loading ? (
           <div className="rounded-xl border border-gray-200 bg-white p-6 text-sm text-gray-500 shadow-sm">Carregando rotinas...</div>
         ) : (
-          <div className={viewMode === 'grid' ? 'grid grid-cols-1 gap-6 md:grid-cols-2 lg:grid-cols-3' : 'flex flex-col gap-4'}>
-            {filteredAutomations.map((automation) => (
-              <article key={automation.id} className="flex h-full flex-col overflow-hidden rounded-xl border border-gray-200 bg-white shadow-sm">
-                <div className="flex items-start justify-between p-5">
+          <div className="space-y-8">
+            {scheduledPromptTemplates.length > 0 && (
+              <section>
+                <div className="mb-3 flex items-center justify-between">
                   <div>
-                    <p className="text-xs font-semibold uppercase tracking-wide text-gray-400">{automation.key}</p>
-                    <h3 className="mt-1 text-lg font-bold text-gray-900">{automation.name}</h3>
-                    <span className={`mt-2 inline-flex rounded-full px-2.5 py-0.5 text-xs font-semibold ${statusBadge(automation)}`}>{statusLabel(automation)}</span>
+                    <h2 className="text-lg font-bold text-gray-900">Relatórios agendados por linguagem natural</h2>
+                    <p className="text-sm text-gray-500">Templates configurados para executar automaticamente.</p>
                   </div>
-                  <button onClick={() => openEditModal(automation)} className="rounded-lg border border-gray-200 p-2 text-gray-500 hover:bg-gray-50 hover:text-gray-700"><Settings2 className="h-4 w-4" /></button>
+                  <span className="rounded-full bg-cyan-50 px-3 py-1 text-xs font-semibold text-cyan-700">{scheduledPromptTemplates.length} agendado(s)</span>
                 </div>
-                <div className="flex-grow border-y border-gray-100 bg-gray-50 px-5 py-3 text-sm">
-                  <div className="flex items-center justify-between py-1"><span className="text-gray-500">Ultima execucao</span><span className="font-medium text-gray-700">{formatDate(automation.last_run_at)}</span></div>
-                  <div className="flex items-center justify-between py-1"><span className="text-gray-500">Proxima execucao</span><span className="font-medium text-gray-700">{formatDate(automation.next_run_at)}</span></div>
-                  <div className="flex items-center justify-between py-1"><span className="text-gray-500">CRON</span><code className="rounded bg-gray-100 px-2 py-0.5 text-xs text-gray-700">{automation.schedule_cron || 'manual'}</code></div>
-                  <div className="flex items-center justify-between py-1"><span className="text-gray-500">Tarefas</span><span className="font-medium text-gray-700">{Array.isArray(automation.params_json?.tasks) ? automation.params_json.tasks.length : 0}</span></div>
+                <div className={viewMode === 'grid' ? 'grid grid-cols-1 gap-6 md:grid-cols-2 lg:grid-cols-3' : 'flex flex-col gap-4'}>
+                  {scheduledPromptTemplates.map((template) => {
+                    const templateRuns = promptTemplateRuns[template.id] || [];
+                    const lastRun = templateRuns[0];
+                    const runKey = -template.id;
+                    return (
+                      <article key={`prompt-template-${template.id}`} className="flex h-full flex-col overflow-hidden rounded-xl border border-cyan-100 bg-white shadow-sm">
+                        <div className="flex items-start justify-between p-5">
+                          <div>
+                            <p className="text-xs font-semibold uppercase tracking-wide text-cyan-600">prompt-report-{template.id}</p>
+                            <h3 className="mt-1 text-lg font-bold text-gray-900">{template.name}</h3>
+                            <div className="mt-2 flex flex-wrap gap-2">
+                              <span className={`inline-flex rounded-full px-2.5 py-0.5 text-xs font-semibold ${templateStatusBadge(template)}`}>{templateStatusLabel(template)}</span>
+                              <span className="inline-flex rounded-full bg-cyan-50 px-2.5 py-0.5 text-xs font-semibold text-cyan-700">Relatório agendado</span>
+                            </div>
+                          </div>
+                          <a href="/reports/prompt-templates" className="rounded-lg border border-gray-200 p-2 text-gray-500 hover:bg-gray-50 hover:text-gray-700" title="Editar no relatório por linguagem natural"><Settings2 className="h-4 w-4" /></a>
+                        </div>
+                        <div className="flex-grow border-y border-cyan-50 bg-cyan-50/40 px-5 py-3 text-sm">
+                          <div className="flex items-center justify-between py-1"><span className="text-gray-500">Última execução</span><span className="font-medium text-gray-700">{lastRun ? formatDate(lastRun.generated_at) : formatDate(template.last_run_at)}</span></div>
+                          <div className="flex items-center justify-between py-1"><span className="text-gray-500">Próxima execução</span><span className="font-medium text-gray-700">{formatDate(template.next_run_at)}</span></div>
+                          <div className="flex items-center justify-between py-1"><span className="text-gray-500">Agendamento</span><code className="rounded bg-white px-2 py-0.5 text-xs text-gray-700">{template.schedule_cron || 'manual'}</code></div>
+                          <div className="flex items-center justify-between py-1"><span className="text-gray-500">Execuções</span><span className="font-medium text-gray-700">{templateRuns.length}</span></div>
+                        </div>
+                        <div className="mt-auto flex gap-2 p-5">
+                          <button onClick={() => handleRunPromptTemplateNow(template)} disabled={runningId === runKey} className="flex flex-1 items-center justify-center gap-2 rounded-lg bg-cyan-500 px-4 py-2 text-sm font-semibold text-white hover:bg-cyan-600 disabled:opacity-60"><Play className="h-4 w-4" />{runningId === runKey ? 'Executando...' : 'Executar'}</button>
+                          <button onClick={() => handleViewPromptTemplateRuns(template)} className="rounded-lg border border-gray-300 px-3 py-2 text-xs font-semibold text-gray-700 hover:bg-gray-50">Execuções</button>
+                          {lastRun ? (
+                            <a href={`/reports/redmine-deliveries?report_id=${lastRun.id}`} className="rounded-lg border border-gray-300 px-3 py-2 text-xs font-semibold text-gray-700 hover:bg-gray-50">Abrir</a>
+                          ) : null}
+                        </div>
+                      </article>
+                    );
+                  })}
                 </div>
-                <div className="mt-auto flex gap-2 p-5">
-                  <button onClick={() => handleRunNow(automation)} disabled={runningId === automation.id} className="flex flex-1 items-center justify-center gap-2 rounded-lg bg-cyan-500 px-4 py-2 text-sm font-semibold text-white hover:bg-cyan-600 disabled:opacity-60"><Play className="h-4 w-4" />{runningId === automation.id ? 'Executando...' : 'Executar'}</button>
-                  <button onClick={() => handleQuickToggle(automation)} className="rounded-lg border border-gray-300 px-3 py-2 text-xs font-semibold text-gray-700 hover:bg-gray-50">{automation.is_enabled ? 'Pausar' : 'Ativar'}</button>
-                </div>
-              </article>
-            ))}
+              </section>
+            )}
 
-            {filteredAutomations.length === 0 && <div className="rounded-xl border border-dashed border-gray-300 bg-white p-8 text-center text-sm text-gray-500">Nenhuma rotina encontrada para os filtros aplicados.</div>}
+            <section>
+              <div className="mb-3">
+                <h2 className="text-lg font-bold text-gray-900">Rotinas cadastradas</h2>
+                <p className="text-sm text-gray-500">Automações criadas na gestão de rotinas.</p>
+              </div>
+              <div className={viewMode === 'grid' ? 'grid grid-cols-1 gap-6 md:grid-cols-2 lg:grid-cols-3' : 'flex flex-col gap-4'}>
+                {filteredAutomations.map((automation) => (
+                  <article key={automation.id} className="flex h-full flex-col overflow-hidden rounded-xl border border-gray-200 bg-white shadow-sm">
+                    <div className="flex items-start justify-between p-5">
+                      <div>
+                        <p className="text-xs font-semibold uppercase tracking-wide text-gray-400">{automation.key}</p>
+                        <h3 className="mt-1 text-lg font-bold text-gray-900">{automation.name}</h3>
+                        <span className={`mt-2 inline-flex rounded-full px-2.5 py-0.5 text-xs font-semibold ${statusBadge(automation)}`}>{statusLabel(automation)}</span>
+                      </div>
+                      <div className="flex gap-1">
+                        <button onClick={() => openEditModal(automation)} className="rounded-lg border border-gray-200 p-2 text-gray-500 hover:bg-gray-50 hover:text-gray-700" title="Editar rotina"><Settings2 className="h-4 w-4" /></button>
+                        <button onClick={() => handleDeleteRoutine(automation)} className="rounded-lg border border-red-200 p-2 text-red-600 hover:bg-red-50" title="Excluir rotina"><Trash2 className="h-4 w-4" /></button>
+                      </div>
+                    </div>
+                    <div className="flex-grow border-y border-gray-100 bg-gray-50 px-5 py-3 text-sm">
+                      <div className="flex items-center justify-between py-1"><span className="text-gray-500">Última execução</span><span className="font-medium text-gray-700">{formatDate(automation.last_run_at)}</span></div>
+                      <div className="flex items-center justify-between py-1"><span className="text-gray-500">Próxima execução</span><span className="font-medium text-gray-700">{formatDate(automation.next_run_at)}</span></div>
+                      <div className="flex items-center justify-between py-1"><span className="text-gray-500">CRON</span><code className="rounded bg-gray-100 px-2 py-0.5 text-xs text-gray-700">{automation.schedule_cron || 'manual'}</code></div>
+                      <div className="flex items-center justify-between py-1"><span className="text-gray-500">Tarefas</span><span className="font-medium text-gray-700">{Array.isArray(automation.params_json?.tasks) ? automation.params_json.tasks.length : 0}</span></div>
+                    </div>
+                    <div className="mt-auto flex gap-2 p-5">
+                      <button onClick={() => handleRunNow(automation)} disabled={runningId === automation.id} className="flex flex-1 items-center justify-center gap-2 rounded-lg bg-cyan-500 px-4 py-2 text-sm font-semibold text-white hover:bg-cyan-600 disabled:opacity-60"><Play className="h-4 w-4" />{runningId === automation.id ? 'Executando...' : 'Executar'}</button>
+                      <button onClick={() => handleViewAutomationRuns(automation)} className="rounded-lg border border-gray-300 px-3 py-2 text-xs font-semibold text-gray-700 hover:bg-gray-50">Execuções</button>
+                      <button onClick={() => handleQuickToggle(automation)} className="rounded-lg border border-gray-300 px-3 py-2 text-xs font-semibold text-gray-700 hover:bg-gray-50">{automation.is_enabled ? 'Pausar' : 'Ativar'}</button>
+                    </div>
+                  </article>
+                ))}
+
+                {filteredAutomations.length === 0 && scheduledPromptTemplates.length === 0 && <div className="rounded-xl border border-dashed border-gray-300 bg-white p-8 text-center text-sm text-gray-500">Nenhuma rotina encontrada para os filtros aplicados.</div>}
+                {filteredAutomations.length === 0 && scheduledPromptTemplates.length > 0 && <div className="rounded-xl border border-dashed border-gray-300 bg-white p-8 text-center text-sm text-gray-500">Nenhuma rotina cadastrada além dos relatórios agendados acima.</div>}
+              </div>
+            </section>
           </div>
         )}
 
         <section className="mt-10 overflow-hidden rounded-xl border border-gray-200 bg-white shadow-sm">
           <div className="border-b border-gray-100 px-6 py-4">
-            <h2 className="text-lg font-bold text-gray-900">Ultimas execucoes</h2>
-            <p className="text-sm text-gray-500">Historico das 50 execucoes mais recentes.</p>
+            <h2 className="text-lg font-bold text-gray-900">Últimas execuções</h2>
+            <p className="text-sm text-gray-500">Histórico das 50 execuções mais recentes.</p>
           </div>
-          {runs.length === 0 ? (
-            <div className="p-6 text-sm text-gray-500">Nenhuma execucao registrada.</div>
+          {latestExecutions.length === 0 ? (
+            <div className="p-6 text-sm text-gray-500">Nenhuma execução registrada.</div>
           ) : (
             <div className="overflow-x-auto">
               <table className="min-w-full text-sm">
-                <thead className="bg-gray-50 text-gray-600"><tr><th className="px-6 py-3 text-left font-semibold">Rotina</th><th className="px-6 py-3 text-left font-semibold">Status</th><th className="px-6 py-3 text-left font-semibold">Inicio</th><th className="px-6 py-3 text-left font-semibold">Fim</th><th className="px-6 py-3 text-left font-semibold">Resumo</th></tr></thead>
+                <thead className="bg-gray-50 text-gray-600"><tr><th className="px-6 py-3 text-left font-semibold">Origem</th><th className="px-6 py-3 text-left font-semibold">Status</th><th className="px-6 py-3 text-left font-semibold">Início</th><th className="px-6 py-3 text-left font-semibold">Fim</th><th className="px-6 py-3 text-left font-semibold">Resultado</th><th className="px-6 py-3 text-left font-semibold">Resumo</th></tr></thead>
                 <tbody>
-                  {runs.map((run) => (
-                    <tr key={run.id} className="border-t border-gray-100">
-                      <td className="px-6 py-3 font-medium text-gray-700">{run.automation_name}</td>
-                      <td className="px-6 py-3"><span className={`inline-flex rounded-full px-2.5 py-0.5 text-xs font-medium ${run.status === 'success' ? 'bg-emerald-100 text-emerald-800' : 'bg-amber-100 text-amber-800'}`}>{run.status}</span></td>
-                      <td className="px-6 py-3 text-gray-500">{new Date(run.started_at).toLocaleString('pt-BR')}</td>
-                      <td className="px-6 py-3 text-gray-500">{run.finished_at ? new Date(run.finished_at).toLocaleString('pt-BR') : '-'}</td>
-                      <td className="px-6 py-3"><button onClick={() => setSelectedRun(run)} className="font-semibold text-cyan-600 hover:text-cyan-700">{run.summary_json?.message || 'Ver detalhes'}</button></td>
-                    </tr>
-                  ))}
+                  {latestExecutions.map((item) => {
+                    const isSuccess = item.status === 'success' || item.status === 'completed';
+                    return (
+                      <tr key={item.id} className="border-t border-gray-100">
+                        <td className="px-6 py-3">
+                          <div className="font-medium text-gray-700">{item.name}</div>
+                          <div className="text-xs text-gray-400">{item.kind === 'prompt_report' ? 'Relatório agendado' : 'Rotina'}</div>
+                        </td>
+                        <td className="px-6 py-3"><span className={`inline-flex rounded-full px-2.5 py-0.5 text-xs font-medium ${isSuccess ? 'bg-emerald-100 text-emerald-800' : 'bg-amber-100 text-amber-800'}`}>{item.status}</span></td>
+                        <td className="px-6 py-3 text-gray-500">{new Date(item.startedAt).toLocaleString('pt-BR')}</td>
+                        <td className="px-6 py-3 text-gray-500">{item.finishedAt ? new Date(item.finishedAt).toLocaleString('pt-BR') : '-'}</td>
+                        <td className="px-6 py-3">
+                          {item.reportId ? (
+                            <a href={`/reports/redmine-deliveries?report_id=${item.reportId}`} className="font-semibold text-cyan-600 hover:text-cyan-700">Abrir relatório #{item.reportId}</a>
+                          ) : (
+                            <span className="text-gray-400">-</span>
+                          )}
+                        </td>
+                        <td className="px-6 py-3">
+                          {item.kind === 'automation' && item.run ? (
+                            <button onClick={() => openRunDetail(item.run)} className="font-semibold text-cyan-600 hover:text-cyan-700">{item.summary}</button>
+                          ) : (
+                            <span className="text-gray-500">{item.summary}</span>
+                          )}
+                        </td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
             </div>
@@ -760,9 +958,10 @@ const RoutinesPage: React.FC = () => {
                   </div>
                 )}
                 <div><label className="mb-1 block text-xs font-semibold text-gray-700">Nome</label><input className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm" value={editForm.name} onChange={(e) => setEditForm((prev) => (prev ? { ...prev, name: e.target.value } : prev))} /></div>
-                <div><label className="mb-1 block text-xs font-semibold text-gray-700">CRON</label><input className="w-full rounded-lg border border-gray-300 px-3 py-2 font-mono text-sm" value={editForm.schedule_cron} onChange={(e) => setEditForm((prev) => (prev ? { ...prev, schedule_cron: e.target.value } : prev))} placeholder="0 8 * * 1" /><p className="mt-1 text-xs text-gray-500">Deixe vazio para execucao apenas manual.</p></div>
+                <div><label className="mb-1 block text-xs font-semibold text-gray-700">CRON</label><input className="w-full rounded-lg border border-gray-300 px-3 py-2 font-mono text-sm" value={editForm.schedule_cron} onChange={(e) => setEditForm((prev) => (prev ? { ...prev, schedule_cron: e.target.value } : prev))} placeholder="0 8 * * 1" /><p className="mt-1 text-xs text-gray-500">Deixe vazio para execução apenas manual.</p></div>
                 <div className="flex items-center gap-2"><input id="enabled-routine" type="checkbox" checked={editForm.is_enabled} onChange={(e) => setEditForm((prev) => (prev ? { ...prev, is_enabled: e.target.checked } : prev))} /><label htmlFor="enabled-routine" className="text-sm text-gray-700">Rotina habilitada</label></div>
                 <div className="flex items-center gap-2"><input id="simulation-routine" type="checkbox" checked={editForm.simulation} onChange={(e) => setEditForm((prev) => (prev ? { ...prev, simulation: e.target.checked } : prev))} /><label htmlFor="simulation-routine" className="text-sm text-gray-700">Executar em modo simulacao</label></div>
+                <div><label className="mb-1 block text-xs font-semibold text-gray-700">Email para aviso de execução</label><input type="email" className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm" value={editForm.notification_email} onChange={(e) => setEditForm((prev) => (prev ? { ...prev, notification_email: e.target.value } : prev))} placeholder="nome@empresa.com" /><p className="mt-1 text-xs text-gray-500">Ao finalizar, envia status e link do resultado quando SMTP estiver configurado.</p></div>
                 <TaskEditor
                   tasks={editForm.tasks}
                   onChange={(tasks) => setEditForm((prev) => (prev ? { ...prev, tasks } : prev))}
@@ -792,9 +991,10 @@ const RoutinesPage: React.FC = () => {
                   </div>
                 )}
                 <div><label className="mb-1 block text-xs font-semibold text-gray-700">Nome</label><input className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm" value={createForm.name} onChange={(e) => setCreateForm((prev) => ({ ...prev, name: e.target.value }))} /></div>
-                <div><label className="mb-1 block text-xs font-semibold text-gray-700">CRON</label><input className="w-full rounded-lg border border-gray-300 px-3 py-2 font-mono text-sm" value={createForm.schedule_cron} onChange={(e) => setCreateForm((prev) => ({ ...prev, schedule_cron: e.target.value }))} placeholder="0 8 * * 1" /><p className="mt-1 text-xs text-gray-500">Deixe vazio para execucao apenas manual.</p></div>
+                <div><label className="mb-1 block text-xs font-semibold text-gray-700">CRON</label><input className="w-full rounded-lg border border-gray-300 px-3 py-2 font-mono text-sm" value={createForm.schedule_cron} onChange={(e) => setCreateForm((prev) => ({ ...prev, schedule_cron: e.target.value }))} placeholder="0 8 * * 1" /><p className="mt-1 text-xs text-gray-500">Deixe vazio para execução apenas manual.</p></div>
                 <div className="flex items-center gap-2"><input id="enabled-create-routine" type="checkbox" checked={createForm.is_enabled} onChange={(e) => setCreateForm((prev) => ({ ...prev, is_enabled: e.target.checked }))} /><label htmlFor="enabled-create-routine" className="text-sm text-gray-700">Rotina habilitada</label></div>
                 <div className="flex items-center gap-2"><input id="simulation-create-routine" type="checkbox" checked={createForm.simulation} onChange={(e) => setCreateForm((prev) => ({ ...prev, simulation: e.target.checked }))} /><label htmlFor="simulation-create-routine" className="text-sm text-gray-700">Executar em modo simulacao</label></div>
+                <div><label className="mb-1 block text-xs font-semibold text-gray-700">Email para aviso de execução</label><input type="email" className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm" value={createForm.notification_email} onChange={(e) => setCreateForm((prev) => ({ ...prev, notification_email: e.target.value }))} placeholder="nome@empresa.com" /><p className="mt-1 text-xs text-gray-500">Ao finalizar, envia status e link do resultado quando SMTP estiver configurado.</p></div>
                 <TaskEditor
                   tasks={createForm.tasks}
                   onChange={(tasks) => setCreateForm((prev) => ({ ...prev, tasks }))}
@@ -808,15 +1008,101 @@ const RoutinesPage: React.FC = () => {
         </div>
       )}
 
+      {selectedAutomationRuns && (
+        <div className="fixed inset-0 z-50 overflow-y-auto">
+          <div className="flex min-h-screen items-end justify-center px-4 pb-20 pt-4 text-center sm:block sm:p-0">
+            <div className="fixed inset-0" aria-hidden="true"><div className="absolute inset-0 bg-gray-500 opacity-75" onClick={() => setSelectedAutomationRuns(null)}></div></div>
+            <span className="hidden sm:inline-block sm:h-screen sm:align-middle" aria-hidden="true">&#8203;</span>
+            <div className="inline-block transform overflow-hidden rounded-lg bg-white px-4 pb-4 pt-5 text-left align-bottom shadow-xl transition-all sm:my-8 sm:w-full sm:max-w-4xl sm:align-middle sm:p-6">
+              <div className="absolute right-0 top-0 pr-4 pt-4"><button className="rounded-md bg-white text-gray-400 hover:text-gray-500" onClick={() => setSelectedAutomationRuns(null)}><X className="h-5 w-5" /></button></div>
+              <h3 className="text-lg font-bold text-gray-900">Execuções da rotina</h3>
+              <p className="mt-1 text-sm text-gray-500">{selectedAutomationRuns.name}</p>
+              <div className="mt-4 overflow-x-auto">
+                <table className="min-w-full text-sm">
+                  <thead className="bg-gray-50 text-gray-600"><tr><th className="px-4 py-2 text-left font-semibold">Status</th><th className="px-4 py-2 text-left font-semibold">Início</th><th className="px-4 py-2 text-left font-semibold">Fim</th><th className="px-4 py-2 text-left font-semibold">Relatório</th><th className="px-4 py-2 text-left font-semibold">Resultado</th></tr></thead>
+                  <tbody>
+                    {runs.filter((run) => run.automation_id === selectedAutomationRuns.id).map((run) => {
+                      const reportLinks = reportLinksFromRun(run);
+                      return (
+                        <tr key={run.id} className="border-t border-gray-100">
+                          <td className="px-4 py-2">{run.status}</td>
+                          <td className="px-4 py-2 text-gray-500">{new Date(run.started_at).toLocaleString('pt-BR')}</td>
+                          <td className="px-4 py-2 text-gray-500">{run.finished_at ? new Date(run.finished_at).toLocaleString('pt-BR') : '-'}</td>
+                          <td className="px-4 py-2">
+                            {reportLinks.length ? (
+                              <a href={reportLinks[0].url} className="font-semibold text-cyan-600 hover:text-cyan-700">Abrir relatório #{reportLinks[0].reportId}</a>
+                            ) : (
+                              <span className="text-gray-400">-</span>
+                            )}
+                          </td>
+                          <td className="px-4 py-2"><button onClick={() => openRunDetail(run)} className="font-semibold text-cyan-600 hover:text-cyan-700">{run.summary_json?.message || 'Abrir execução'}</button></td>
+                        </tr>
+                      );
+                    })}
+                    {runs.filter((run) => run.automation_id === selectedAutomationRuns.id).length === 0 && (
+                      <tr><td colSpan={5} className="px-4 py-6 text-center text-gray-500">Nenhuma execução registrada para esta rotina.</td></tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {selectedPromptTemplate && (
+        <div className="fixed inset-0 z-50 overflow-y-auto">
+          <div className="flex min-h-screen items-end justify-center px-4 pb-20 pt-4 text-center sm:block sm:p-0">
+            <div className="fixed inset-0" aria-hidden="true"><div className="absolute inset-0 bg-gray-500 opacity-75" onClick={() => setSelectedPromptTemplate(null)}></div></div>
+            <span className="hidden sm:inline-block sm:h-screen sm:align-middle" aria-hidden="true">&#8203;</span>
+            <div className="inline-block transform overflow-hidden rounded-lg bg-white px-4 pb-4 pt-5 text-left align-bottom shadow-xl transition-all sm:my-8 sm:w-full sm:max-w-4xl sm:align-middle sm:p-6">
+              <div className="absolute right-0 top-0 pr-4 pt-4"><button className="rounded-md bg-white text-gray-400 hover:text-gray-500" onClick={() => setSelectedPromptTemplate(null)}><X className="h-5 w-5" /></button></div>
+              <h3 className="text-lg font-bold text-gray-900">Execuções do relatório agendado</h3>
+              <p className="mt-1 text-sm text-gray-500">{selectedPromptTemplate.name}</p>
+              <div className="mt-4 overflow-x-auto">
+                <table className="min-w-full text-sm">
+                  <thead className="bg-gray-50 text-gray-600"><tr><th className="px-4 py-2 text-left font-semibold">Relatório</th><th className="px-4 py-2 text-left font-semibold">Status</th><th className="px-4 py-2 text-left font-semibold">Gerado em</th><th className="px-4 py-2 text-left font-semibold">Resultado</th></tr></thead>
+                  <tbody>
+                    {(promptTemplateRuns[selectedPromptTemplate.id] || []).map((report) => (
+                      <tr key={report.id} className="border-t border-gray-100">
+                        <td className="px-4 py-2 font-medium text-gray-700">#{report.id}</td>
+                        <td className="px-4 py-2"><span className={`inline-flex rounded-full px-2.5 py-0.5 text-xs font-medium ${report.status === 'completed' ? 'bg-emerald-100 text-emerald-800' : 'bg-amber-100 text-amber-800'}`}>{report.status}</span></td>
+                        <td className="px-4 py-2 text-gray-500">{formatDate(report.generated_at)}</td>
+                        <td className="px-4 py-2"><a href={`/reports/redmine-deliveries?report_id=${report.id}`} className="font-semibold text-cyan-600 hover:text-cyan-700">Abrir relatório #{report.id}</a></td>
+                      </tr>
+                    ))}
+                    {(promptTemplateRuns[selectedPromptTemplate.id] || []).length === 0 && (
+                      <tr><td colSpan={4} className="px-4 py-6 text-center text-gray-500">Nenhuma execução registrada para este relatório agendado.</td></tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       {selectedRun && (
         <div className="fixed inset-0 z-50 overflow-y-auto">
           <div className="flex min-h-screen items-end justify-center px-4 pb-20 pt-4 text-center sm:block sm:p-0">
-            <div className="fixed inset-0" aria-hidden="true"><div className="absolute inset-0 bg-gray-500 opacity-75" onClick={() => setSelectedRun(null)}></div></div>
+            <div className="fixed inset-0" aria-hidden="true"><div className="absolute inset-0 bg-gray-500 opacity-75" onClick={closeRunDetail}></div></div>
             <span className="hidden sm:inline-block sm:h-screen sm:align-middle" aria-hidden="true">&#8203;</span>
             <div className="inline-block transform overflow-hidden rounded-lg bg-white px-4 pb-4 pt-5 text-left align-bottom shadow-xl transition-all sm:my-8 sm:w-full sm:max-w-lg sm:align-middle sm:p-6">
-              <div className="absolute right-0 top-0 pr-4 pt-4"><button className="rounded-md bg-white text-gray-400 hover:text-gray-500" onClick={() => setSelectedRun(null)}><X className="h-5 w-5" /></button></div>
-              <h3 className="text-lg font-bold text-gray-900">Execucao: {selectedRun.automation_name}</h3>
-              <div className="mt-3 space-y-1 text-sm text-gray-600"><p>Status: <span className="font-semibold text-gray-800">{selectedRun.status}</span></p><p>Inicio: {new Date(selectedRun.started_at).toLocaleString('pt-BR')}</p><p>Fim: {selectedRun.finished_at ? new Date(selectedRun.finished_at).toLocaleString('pt-BR') : '-'}</p></div>
+              <div className="absolute right-0 top-0 pr-4 pt-4"><button className="rounded-md bg-white text-gray-400 hover:text-gray-500" onClick={closeRunDetail}><X className="h-5 w-5" /></button></div>
+              <h3 className="text-lg font-bold text-gray-900">Execução: {selectedRun.automation_name}</h3>
+              <div className="mt-3 space-y-1 text-sm text-gray-600"><p>Status: <span className="font-semibold text-gray-800">{selectedRun.status}</span></p><p>Início: {new Date(selectedRun.started_at).toLocaleString('pt-BR')}</p><p>Fim: {selectedRun.finished_at ? new Date(selectedRun.finished_at).toLocaleString('pt-BR') : '-'}</p></div>
+              {reportLinksFromRun(selectedRun).length > 0 && (
+                <div className="mt-4 rounded border border-cyan-100 bg-cyan-50 p-3 text-sm">
+                  <h4 className="mb-2 font-bold text-cyan-800">Resultados gerados</h4>
+                  <div className="flex flex-col gap-1">
+                    {reportLinksFromRun(selectedRun).map((link) => (
+                      <a key={String(link.reportId)} href={link.url} className="font-semibold text-cyan-700 hover:text-cyan-900">
+                        Abrir relatório #{link.reportId}
+                      </a>
+                    ))}
+                  </div>
+                </div>
+              )}
               <div className="mt-4"><h4 className="mb-2 text-sm font-bold text-gray-700">Resumo</h4><pre className="whitespace-pre-wrap rounded border border-gray-200 bg-gray-50 p-3 text-xs text-gray-700">{JSON.stringify(selectedRun.summary_json, null, 2)}</pre></div>
               {selectedRun.error_text && <div className="mt-4"><h4 className="mb-2 text-sm font-bold text-red-600">Erro</h4><pre className="whitespace-pre-wrap rounded border border-red-200 bg-red-50 p-3 text-xs text-red-700">{selectedRun.error_text}</pre></div>}
             </div>

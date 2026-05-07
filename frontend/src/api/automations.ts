@@ -42,7 +42,7 @@ export const listAutomations = async () => {
   return data;
 };
 
-export const runAutomation = async (id: number, simulation = true) => {
+export const runAutomation = async (id: number, simulation = false) => {
   const { data } = await api.post(`/automations/${id}/run`, { simulation });
   return data;
 };
@@ -55,6 +55,10 @@ export const createAutomation = async (payload: AutomationCreatePayload) => {
 export const updateAutomation = async (id: number, payload: AutomationUpdatePayload) => {
   const { data } = await api.put<Automation>(`/automations/${id}`, payload);
   return data;
+};
+
+export const deleteAutomation = async (id: number) => {
+  await api.delete(`/automations/${id}`);
 };
 
 export const listAutomationRuns = async () => {

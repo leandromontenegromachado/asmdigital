@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 from datetime import date, datetime, timezone
+from email.message import EmailMessage
 import json
 import logging
 import re
+import smtplib
 import time
 from typing import Any
 
@@ -12,6 +14,7 @@ from apscheduler.schedulers.base import BaseScheduler
 from apscheduler.triggers.cron import CronTrigger
 from sqlalchemy.orm import Session
 
+from app.core.config import settings
 from app.db.session import SessionLocal
 from app.models import Automation, AutomationRun, Connector, PromptReportTemplate, Report
 from app.services.azure_devops_service import AZURE_CONNECTOR_TYPES, query_snapshot
@@ -55,7 +58,7 @@ def ensure_default_automations(db: Session) -> None:
                 name=name,
                 schedule_cron=None,
                 is_enabled=True,
-                params_json={"simulation": True, "tasks": default_tasks},
+                params_json={"simulation": False, "tasks": default_tasks},
             )
         )
     db.commit()
@@ -492,7 +495,54 @@ def _execute_task(db: Session, automation: Automation, index: int, task_text: st
     return _task_result(index, task_text, action, "failed", "Tipo de tarefa desconhecido")
 
 
-def run_automation(db: Session, automation: Automation, simulation: bool = True) -> AutomationRun:
+def _extract_report_links(task_results: list[dict[str, Any]]) -> list[str]:
+    base_url = settings.app_public_url.rstrip("/")
+    links: list[str] = []
+    for result in task_results:
+        data = result.get("data") if isinstance(result.get("data"), dict) else {}
+        report_id = data.get("report_id")
+        if report_id:
+            links.append(f"{base_url}/reports/redmine-deliveries?report_id={report_id}")
+    return links
+
+
+def _send_automation_email(automation: Automation, run: AutomationRun, task_results: list[dict[str, Any]]) -> dict[str, Any] | None:
+    params = automation.params_json or {}
+    email_to = str(params.get("notification_email") or "").strip()
+    if not email_to:
+        return None
+    if not settings.smtp_host:
+        return {"status": "skipped", "reason": "SMTP_HOST nao configurado", "to": email_to}
+
+    run_url = f"{settings.app_public_url.rstrip('/')}/routines?run_id={run.id}"
+    report_links = _extract_report_links(task_results)
+    body_lines = [
+        f"Rotina: {automation.name}",
+        f"Status: {run.status}",
+        f"Execucao ID: {run.id}",
+        f"Resultado da execucao: {run_url}",
+        "",
+        "Relatorios gerados:",
+    ]
+    body_lines.extend(report_links or ["Nenhum relatorio gerado nesta execucao."])
+
+    message = EmailMessage()
+    message["Subject"] = f"ASMDIGITAL - Rotina executada: {automation.name}"
+    message["From"] = settings.smtp_from
+    message["To"] = email_to
+    message.set_content("\n".join(body_lines))
+
+    with smtplib.SMTP(settings.smtp_host, settings.smtp_port, timeout=20) as smtp:
+        if settings.smtp_use_tls:
+            smtp.starttls()
+        if settings.smtp_username and settings.smtp_password:
+            smtp.login(settings.smtp_username, settings.smtp_password)
+        smtp.send_message(message)
+
+    return {"status": "sent", "to": email_to, "run_url": run_url, "report_links": report_links}
+
+
+def run_automation(db: Session, automation: Automation, simulation: bool = False) -> AutomationRun:
     run = AutomationRun(
         automation_id=automation.id,
         status="running",
@@ -557,6 +607,20 @@ def run_automation(db: Session, automation: Automation, simulation: bool = True)
 
     db.commit()
     db.refresh(run)
+
+    try:
+        notification = _send_automation_email(automation, run, task_results)
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("automation_email_failed", extra={"automation_id": automation.id, "run_id": run.id, "error": str(exc)})
+        notification = {"status": "failed", "error": str(exc)}
+
+    if notification:
+        run.summary_json = {
+            **(run.summary_json or {}),
+            "notification": notification,
+        }
+        db.commit()
+        db.refresh(run)
     return run
 
 
@@ -597,5 +661,5 @@ def execute_automation_job(automation_id: int) -> None:
         if not automation or not automation.is_enabled:
             return
 
-        simulation = bool((automation.params_json or {}).get("simulation", True))
+        simulation = bool((automation.params_json or {}).get("simulation", False))
         run_automation(db, automation, simulation=simulation)

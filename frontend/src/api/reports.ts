@@ -16,6 +16,7 @@ export interface ReportRow {
   entrega?: string | null;
   source_ref?: string | null;
   source_url?: string | null;
+  raw_json?: Record<string, any> | null;
   created_at: string;
 }
 

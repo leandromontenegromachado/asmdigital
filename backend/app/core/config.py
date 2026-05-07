@@ -22,6 +22,13 @@ class Settings(BaseSettings):
     admin_password: str = "admin123"
 
     cors_origins: str = "http://localhost:3000"
+    app_public_url: str = "http://localhost:3000"
+    smtp_host: str | None = None
+    smtp_port: int = 587
+    smtp_username: str | None = None
+    smtp_password: str | None = None
+    smtp_from: str = "asmdigital@company.com"
+    smtp_use_tls: bool = True
 
     redmine_default_timeout: int = 20
     redmine_retry_attempts: int = 3
@@ -41,7 +48,7 @@ class Settings(BaseSettings):
     fala_ai_assistant_enabled: bool = True
     fala_ai_assistant_domain: str = "geral"
     fala_ai_gemini_api_key: str | None = None
-    fala_ai_gemini_model: str = "gemini-2.5-flash"
+    fala_ai_gemini_model: str = "gemini-3-flash-preview"
     fala_ai_gemini_timeout_seconds: int = 60
 
 

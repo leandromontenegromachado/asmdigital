@@ -17,6 +17,16 @@ from app.services.report_service import generate_redmine_report
 router = APIRouter(prefix="/reports", tags=["reports"])
 
 
+EXTRA_COLUMNS = [
+    ("Titulo", "subject"),
+    ("Atribuido para", "assigned_to"),
+    ("Data prevista", "due_date"),
+    ("Alterado em", "updated_on"),
+    ("Dias atraso", "days_overdue"),
+    ("Status", "status"),
+]
+
+
 @router.post("/redmine-deliveries/generate", response_model=ReportOut)
 def generate_redmine_deliveries(
     payload: ReportGenerateRequest,
@@ -102,9 +112,17 @@ def export_report_csv(
 
     buffer = io.StringIO()
     writer = csv.writer(buffer)
-    writer.writerow(["Cliente", "Sistema", "Entrega", "source_ref", "source_url"])
+    has_raw = any(row.raw_json for row in rows)
+    headers = ["Cliente", "Sistema", "Entrega", "source_ref", "source_url"]
+    if has_raw:
+        headers.extend(label for label, _key in EXTRA_COLUMNS)
+    writer.writerow(headers)
     for row in rows:
-        writer.writerow([row.cliente, row.sistema, row.entrega, row.source_ref, row.source_url])
+        values = [row.cliente, row.sistema, row.entrega, row.source_ref, row.source_url]
+        if has_raw:
+            raw = row.raw_json or {}
+            values.extend(raw.get(key) for _label, key in EXTRA_COLUMNS)
+        writer.writerow(values)
 
     buffer.seek(0)
     filename = f"report-{report_id}.csv"
@@ -144,11 +162,26 @@ def export_report_pdf(
         Spacer(1, 12),
     ]
 
-    data = [["Cliente", "Sistema", "Entrega", "source_ref", "source_url"]]
+    has_raw = any(row.raw_json for row in rows)
+    if has_raw:
+        data = [["ID", "Titulo", "Atribuido para", "Data prevista", "Alterado em", "Dias atraso"]]
+    else:
+        data = [["Cliente", "Sistema", "Entrega", "source_ref", "source_url"]]
     for row in rows:
-        data.append([row.cliente or "-", row.sistema or "-", row.entrega or "-", row.source_ref or "-", row.source_url or "-"])
+        if has_raw:
+            raw = row.raw_json or {}
+            data.append([
+                row.source_ref or "-",
+                raw.get("subject") or "-",
+                raw.get("assigned_to") or "-",
+                raw.get("due_date") or "-",
+                raw.get("updated_on") or "-",
+                str(raw.get("days_overdue") or 0),
+            ])
+        else:
+            data.append([row.cliente or "-", row.sistema or "-", row.entrega or "-", row.source_ref or "-", row.source_url or "-"])
 
-    table = Table(data, repeatRows=1, colWidths=[140, 140, 140, 90, 220])
+    table = Table(data, repeatRows=1, colWidths=[60, 300, 90, 130, 90, 70] if has_raw else [140, 140, 140, 90, 220])
     table.setStyle(
         TableStyle(
             [

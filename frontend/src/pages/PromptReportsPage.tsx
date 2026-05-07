@@ -1,10 +1,10 @@
 import React, { useEffect, useState } from 'react';
-import { Copy, Play, Plus, Save, Sparkles, Trash2, Wand2 } from 'lucide-react';
+import { Copy, Play, Plus, Save, Trash2, Wand2 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { AppShell } from '../components/AppShell';
 import { Topbar } from '../components/Topbar';
 import { StateBlock } from '../components/StateBlock';
-import { listConnectors, Connector } from '../api/connectors';
+import { listConnectors, listRedmineQueries, Connector, RedmineQuery } from '../api/connectors';
 import {
   createPromptReportTemplate,
   deletePromptReportTemplate,
@@ -25,8 +25,9 @@ type FormState = {
   query_id: string;
   start_date: string;
   end_date: string;
-  schedule_cron: string;
-  is_enabled: boolean;
+  schedule_enabled: boolean;
+  schedule_time: string;
+  schedule_days: string[];
 };
 
 const defaultForm: FormState = {
@@ -38,48 +39,19 @@ const defaultForm: FormState = {
   query_id: '',
   start_date: '',
   end_date: '',
-  schedule_cron: '',
-  is_enabled: true,
+  schedule_enabled: false,
+  schedule_time: '08:00',
+  schedule_days: ['1', '2', '3', '4', '5'],
 };
 
-type PromptSuggestion = {
-  label: string;
-  name: string;
-  project_ids: string;
-  status_id: string;
-  query_id: string;
-  schedule_cron: string;
-  brief: string;
-};
-
-const PROMPT_SUGGESTIONS: PromptSuggestion[] = [
-  {
-    label: 'Pendencias abertas',
-    name: 'Pendencias abertas semanais',
-    project_ids: 'portal, erp',
-    status_id: 'open',
-    query_id: '',
-    schedule_cron: '0 8 * * 1',
-    brief: 'Listar pendencias abertas, riscos e donos por projeto.',
-  },
-  {
-    label: 'Fechados mensais',
-    name: 'Entregas fechadas mensais',
-    project_ids: 'portal, erp',
-    status_id: 'closed',
-    query_id: '',
-    schedule_cron: '0 9 1 * *',
-    brief: 'Consolidar entregas fechadas no mes e destacar volume por sistema.',
-  },
-  {
-    label: 'Query monitorada',
-    name: 'Monitoramento por query',
-    project_ids: '',
-    status_id: '',
-    query_id: '23',
-    schedule_cron: '0 */4 * * *',
-    brief: 'Acompanhar query salva com itens atrasados e bloqueados.',
-  },
+const WEEK_DAYS = [
+  { value: '1', label: 'Seg' },
+  { value: '2', label: 'Ter' },
+  { value: '3', label: 'Qua' },
+  { value: '4', label: 'Qui' },
+  { value: '5', label: 'Sex' },
+  { value: '6', label: 'Sab' },
+  { value: '0', label: 'Dom' },
 ];
 
 const formatDate = (value?: string | null) => {
@@ -87,25 +59,99 @@ const formatDate = (value?: string | null) => {
   return new Date(value).toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' });
 };
 
-const templateToForm = (template: PromptReportTemplate): FormState => ({
-  name: template.name,
-  connector_id: String(template.connector_id),
-  prompt_text: template.prompt_text,
-  project_ids: Array.isArray(template.params_json?.project_ids) ? template.params_json.project_ids.join(', ') : '',
-  status_id: template.params_json?.status_id || '',
-  query_id: template.params_json?.query_id || '',
-  start_date: template.params_json?.start_date || '',
-  end_date: template.params_json?.end_date || '',
-  schedule_cron: template.schedule_cron || '',
-  is_enabled: template.is_enabled,
-});
+const parseSchedule = (cron?: string | null, isEnabled?: boolean) => {
+  const fallback = {
+    schedule_enabled: Boolean(isEnabled && cron),
+    schedule_time: '08:00',
+    schedule_days: ['1', '2', '3', '4', '5'],
+  };
+  if (!cron) return fallback;
+  const parts = cron.trim().split(/\s+/);
+  if (parts.length !== 5) return fallback;
+  const [minute, hour, , , days] = parts;
+  const parsedHour = hour.padStart(2, '0');
+  const parsedMinute = minute.padStart(2, '0');
+  const scheduleDays = days === '*' ? WEEK_DAYS.map((item) => item.value) : days.split(',').filter(Boolean);
+  return {
+    schedule_enabled: Boolean(isEnabled),
+    schedule_time: `${parsedHour}:${parsedMinute}`,
+    schedule_days: scheduleDays.length ? scheduleDays : fallback.schedule_days,
+  };
+};
+
+const templateToForm = (template: PromptReportTemplate): FormState => {
+  const schedule = parseSchedule(template.schedule_cron, template.is_enabled);
+  return {
+    name: template.name,
+    connector_id: String(template.connector_id),
+    prompt_text: template.prompt_text,
+    project_ids: Array.isArray(template.params_json?.project_ids) ? template.params_json.project_ids.join(', ') : '',
+    status_id: template.params_json?.status_id || '',
+    query_id: template.params_json?.query_id || '',
+    start_date: template.params_json?.start_date || '',
+    end_date: template.params_json?.end_date || '',
+    ...schedule,
+  };
+};
+
+const isPlaceholderProject = (projectId: string) => {
+  const normalized = projectId.trim().toLowerCase();
+  return (
+    !normalized ||
+    ['opcional', 'optional', 'projetomodelo', 'projeto-modelo', 'projectmodel', 'project-model'].includes(normalized) ||
+    normalized === 'padrao_do_conector' ||
+    normalized === 'padrao-do-conector' ||
+    /^projeto\d*$/.test(normalized) ||
+    /^project\d*$/.test(normalized)
+  );
+};
+
+const connectorProjectIds = (connector?: Connector) => {
+  const raw = connector?.config_json?.project_ids;
+  if (!Array.isArray(raw)) return '';
+  return raw
+    .map((item) => String(item).trim().toLowerCase())
+    .filter((item) => !isPlaceholderProject(item))
+    .join(', ');
+};
+
+const inferOutputItems = (brief: string) => {
+  const lowered = brief.toLowerCase();
+  const items: string[] = [];
+  if (lowered.includes('resumo')) items.push('Resumo conforme solicitado no objetivo');
+  if (lowered.includes('risco') || lowered.includes('bloqueio')) items.push('Riscos e bloqueios identificados nos dados retornados');
+  if (lowered.includes('tabela') || lowered.includes('campos') || lowered.includes('liste') || lowered.includes('listar')) {
+    items.push('Tabela com as colunas citadas no objetivo');
+  }
+  if (lowered.includes('ordene') || lowered.includes('ordenar')) items.push('Ordenacao conforme criterio descrito no objetivo');
+  if (lowered.includes('acao') || lowered.includes('acao') || lowered.includes('recomend')) {
+    items.push('Acoes recomendadas apenas quando derivadas dos dados');
+  }
+  return items.length ? items : ['Resultado direto conforme o objetivo descrito', 'Tabela com os campos relevantes citados no prompt'];
+};
+
+const inferRules = (brief: string) => {
+  const lowered = brief.toLowerCase();
+  const rules = [
+    'Nao inventar campos fora do retorno do Redmine.',
+    'Declarar quando houver dados incompletos.',
+  ];
+  if (lowered.includes('atras') || lowered.includes('vencid') || lowered.includes('data prevista menor')) {
+    rules.push('Considerar atrasado quando a data prevista for menor que a data de hoje e a demanda nao estiver fechada.');
+  }
+  if (lowered.includes('ordene') || lowered.includes('ordenar')) {
+    rules.push('Respeitar a ordenacao solicitada no objetivo.');
+  }
+  return rules;
+};
 
 const buildPromptMarkdown = (form: FormState, brief: string) => {
+  const objective = brief.trim() || 'Gerar relatorio operacional com dados do Redmine para suporte a decisao.';
   const projects = form.project_ids
     .split(',')
     .map((item) => item.trim().toLowerCase())
     .filter(Boolean);
-  const projectLine = projects.length ? projects.join(', ') : '{{projeto1, projeto2}}';
+  const projectLine = projects.length ? projects.join(', ') : '{{projetos_do_conector}}';
 
   let periodLine = 'este mes';
   if (form.start_date && form.end_date) {
@@ -122,9 +168,11 @@ const buildPromptMarkdown = (form: FormState, brief: string) => {
       : 'todos os status';
 
   const queryLine = form.query_id.trim() || 'opcional';
+  const outputItems = inferOutputItems(objective).map((item) => `- ${item}`).join('\n');
+  const rules = inferRules(objective).map((item) => `- ${item}`).join('\n');
 
   return `# Objetivo
-${brief || 'Gerar relatorio operacional com dados do Redmine para suporte a decisao.'}
+${objective}
 
 ## Fonte
 - conector_id: ${form.connector_id || '{{CONECTOR_ID}}'}
@@ -137,15 +185,19 @@ ${brief || 'Gerar relatorio operacional com dados do Redmine para suporte a deci
 - query_id: ${queryLine}
 
 ## Saida esperada
-- Resumo executivo (5-10 linhas)
-- Top riscos e bloqueios
-- Tabela consolidada por Cliente, Sistema e Entrega
-- Acoes recomendadas para o proximo ciclo
+${outputItems}
 
 ## Regras
-- Declarar quando houver dados incompletos.
-- Nao inventar campos fora do retorno do Redmine.
-- Priorizar itens atrasados e de maior impacto.`;
+${rules}`;
+};
+
+const buildScheduleCron = (form: FormState) => {
+  if (!form.schedule_enabled) return null;
+  const [hour = '8', minute = '0'] = form.schedule_time.split(':');
+  const normalizedHour = String(Number(hour));
+  const normalizedMinute = String(Number(minute));
+  const days = form.schedule_days.length === WEEK_DAYS.length ? '*' : form.schedule_days.join(',');
+  return `${normalizedMinute} ${normalizedHour} * * ${days || '*'}`;
 };
 
 const PromptReportsPage: React.FC = () => {
@@ -162,6 +214,8 @@ const PromptReportsPage: React.FC = () => {
   const [info, setInfo] = useState<string | null>(null);
   const [runPromptOverride, setRunPromptOverride] = useState('');
   const [promptBrief, setPromptBrief] = useState('');
+  const [savedQueries, setSavedQueries] = useState<RedmineQuery[]>([]);
+  const [loadingQueries, setLoadingQueries] = useState(false);
 
   const loadData = async () => {
     setLoading(true);
@@ -176,6 +230,13 @@ const PromptReportsPage: React.FC = () => {
       if (!selectedId && templatesData.length) {
         setSelectedId(templatesData[0].id);
         setForm(templateToForm(templatesData[0]));
+      } else if (!selectedId && !templatesData.length) {
+        const redmineConnector = connectorsData.find((connector) => connector.type === 'redmine') || connectorsData[0];
+        setForm((prev) => ({
+          ...prev,
+          connector_id: redmineConnector ? String(redmineConnector.id) : '',
+          project_ids: connectorProjectIds(redmineConnector),
+        }));
       }
       if (!templatesData.length) {
         setRuns([]);
@@ -213,10 +274,12 @@ const PromptReportsPage: React.FC = () => {
   };
 
   const resetForm = () => {
+    const redmineConnector = connectors.find((connector) => connector.type === 'redmine') || connectors[0];
     setSelectedId(null);
     setForm({
       ...defaultForm,
-      connector_id: connectors[0] ? String(connectors[0].id) : '',
+      connector_id: redmineConnector ? String(redmineConnector.id) : '',
+      project_ids: connectorProjectIds(redmineConnector),
     });
     setRuns([]);
     setRunPromptOverride('');
@@ -225,23 +288,67 @@ const PromptReportsPage: React.FC = () => {
     setError(null);
   };
 
-  const applySuggestion = (suggestion: PromptSuggestion) => {
-    setForm((prev) => ({
-      ...prev,
-      name: suggestion.name,
-      project_ids: suggestion.project_ids,
-      status_id: suggestion.status_id,
-      query_id: suggestion.query_id,
-      schedule_cron: suggestion.schedule_cron,
-    }));
-    setPromptBrief(suggestion.brief);
-        setInfo(`Sugestao aplicada: ${suggestion.label}.`);
+  const primaryProjectId = () =>
+    form.project_ids
+      .split(',')
+      .map((item) => item.trim().toLowerCase())
+      .filter(Boolean)[0] || '';
+
+  const handleLoadSavedQueries = async () => {
+    const connectorId = Number(form.connector_id);
+    if (!connectorId) {
+      setError('Selecione um conector Redmine antes de carregar consultas.');
+      return;
+    }
+    const connector = connectors.find((item) => item.id === connectorId);
+    if (connector?.type !== 'redmine') {
+      setError('Consultas salvas estao disponiveis apenas para conectores Redmine.');
+      return;
+    }
+    setLoadingQueries(true);
+    setError(null);
+    try {
+      const data = await listRedmineQueries(connectorId, primaryProjectId() || undefined);
+      setSavedQueries(data);
+      setInfo(data.length ? `${data.length} consultas salvas carregadas.` : 'Nenhuma consulta salva encontrada para este projeto.');
+    } catch (err: any) {
+      setError(err?.response?.data?.detail || 'Falha ao carregar consultas salvas do Redmine.');
+      setSavedQueries([]);
+    } finally {
+      setLoadingQueries(false);
+    }
+  };
+
+  const handleSelectSavedQuery = (queryId: string) => {
+    setForm((prev) => ({ ...prev, query_id: queryId }));
+    const query = savedQueries.find((item) => String(item.id) === queryId);
+    if (query) {
+      setInfo(`Consulta selecionada: ${query.name}`);
+    }
   };
 
   const handleGeneratePrompt = () => {
     const generated = buildPromptMarkdown(form, promptBrief.trim());
     setForm((prev) => ({ ...prev, prompt_text: generated }));
     setInfo('Prompt em Markdown gerado no template.');
+  };
+
+  const handleConnectorChange = (connectorId: string) => {
+    const connector = connectors.find((item) => String(item.id) === connectorId);
+    setForm((prev) => ({
+      ...prev,
+      connector_id: connectorId,
+      project_ids: prev.project_ids.trim() ? prev.project_ids : connectorProjectIds(connector),
+    }));
+  };
+
+  const toggleScheduleDay = (day: string) => {
+    setForm((prev) => {
+      const scheduleDays = prev.schedule_days.includes(day)
+        ? prev.schedule_days.filter((item) => item !== day)
+        : [...prev.schedule_days, day];
+      return { ...prev, schedule_days: scheduleDays };
+    });
   };
 
   const handleCopyPrompt = async () => {
@@ -265,14 +372,14 @@ const PromptReportsPage: React.FC = () => {
       project_ids: form.project_ids
         .split(',')
         .map((item) => item.trim().toLowerCase())
-        .filter(Boolean),
+        .filter((item) => !isPlaceholderProject(item)),
       status_id: form.status_id.trim() || null,
       query_id: form.query_id.trim() || null,
       start_date: form.start_date || null,
       end_date: form.end_date || null,
     },
-    schedule_cron: form.schedule_cron.trim() || null,
-    is_enabled: form.is_enabled,
+    schedule_cron: buildScheduleCron(form),
+    is_enabled: form.schedule_enabled,
   });
 
   const handleSave = async () => {
@@ -336,8 +443,9 @@ const PromptReportsPage: React.FC = () => {
     setError(null);
     setInfo(null);
     try {
+      const payload = buildPayload();
       // Sync current form data before running to avoid stale template params on backend.
-      const synced = await updatePromptReportTemplate(selectedId, buildPayload());
+      const synced = await updatePromptReportTemplate(selectedId, payload);
       setTemplates((prev) => prev.map((item) => (item.id === synced.id ? synced : item)));
       setForm(templateToForm(synced));
 
@@ -346,6 +454,7 @@ const PromptReportsPage: React.FC = () => {
             setInfo(`Relatorio executado com sucesso. ID: ${result.report_id}`);
       await loadData();
       await loadRuns(selectedId);
+      navigate(`/reports/redmine-deliveries?report_id=${result.report_id}`);
     } catch (err: any) {
       const detail = err?.response?.data?.detail || 'Falha ao executar template.';
       if (String(detail).includes('project_ids or query_id')) {
@@ -362,7 +471,7 @@ const PromptReportsPage: React.FC = () => {
     <AppShell>
       <Topbar
                 title="Relatorios por Linguagem Natural"
-                subtitle="Crie prompts reutilizaveis, execute sob demanda e configure agendamento com CRON."
+                subtitle="Crie prompts reutilizaveis e execute relatorios sob demanda."
       />
 
       {loading && <StateBlock tone="loading" title="Carregando" description="Buscando templates e conectores..." />}
@@ -395,9 +504,9 @@ const PromptReportsPage: React.FC = () => {
                   }`}
                 >
                   <p className="text-sm font-semibold text-slate-800">{item.name}</p>
-                  <p className="text-xs text-slate-500">Ultima execucao: {formatDate(item.last_run_at)}</p>
-                  <p className="text-xs text-slate-500">Proxima: {formatDate(item.next_run_at)}</p>
-                </button>
+                <p className="text-xs text-slate-500">Ultima execucao: {formatDate(item.last_run_at)}</p>
+                {item.next_run_at && <p className="text-xs text-slate-500">Proxima: {formatDate(item.next_run_at)}</p>}
+              </button>
               ))}
             </div>
           </div>
@@ -441,7 +550,7 @@ const PromptReportsPage: React.FC = () => {
                 <select
                   className="rounded-lg border border-slate-200 px-3 py-2"
                   value={form.connector_id}
-                  onChange={(e) => setForm((prev) => ({ ...prev, connector_id: e.target.value }))}
+                  onChange={(e) => handleConnectorChange(e.target.value)}
                 >
                   <option value="">Selecione</option>
                   {connectors.map((connector) => (
@@ -460,19 +569,6 @@ const PromptReportsPage: React.FC = () => {
                   onChange={(e) => setPromptBrief(e.target.value)}
                                     placeholder="Descreva o que voce precisa: ex. mostrar bloqueios e riscos dos projetos de integracao."
                 />
-                <div className="flex flex-wrap gap-2">
-                  {PROMPT_SUGGESTIONS.map((item) => (
-                    <button
-                      key={item.label}
-                      type="button"
-                      onClick={() => applySuggestion(item)}
-                      className="inline-flex items-center gap-1 rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50"
-                    >
-                      <Sparkles size={13} />
-                      {item.label}
-                    </button>
-                  ))}
-                </div>
                 <div className="flex flex-wrap gap-2">
                   <button
                     type="button"
@@ -523,6 +619,34 @@ const PromptReportsPage: React.FC = () => {
                   placeholder="8117"
                 />
               </div>
+              <div className="flex flex-col gap-2 md:col-span-2">
+                <label className="text-xs font-semibold text-slate-700">Consultas salvas do Redmine</label>
+                <div className="flex flex-col gap-2 md:flex-row">
+                  <select
+                    className="min-w-0 flex-1 rounded-lg border border-slate-200 px-3 py-2"
+                    value={form.query_id}
+                    onChange={(e) => handleSelectSavedQuery(e.target.value)}
+                  >
+                    <option value="">Selecione uma consulta salva</option>
+                    {savedQueries.map((query) => (
+                      <option key={query.id} value={query.id}>
+                        #{query.id} - {query.name}
+                      </option>
+                    ))}
+                  </select>
+                  <button
+                    type="button"
+                    onClick={handleLoadSavedQueries}
+                    disabled={loadingQueries || !form.connector_id}
+                    className="whitespace-nowrap rounded-lg border border-slate-200 px-3 py-2 text-xs font-semibold text-slate-700 disabled:opacity-50"
+                  >
+                    {loadingQueries ? 'Carregando...' : 'Carregar consultas'}
+                  </button>
+                </div>
+                <p className="text-xs text-slate-500">
+                  Carrega as consultas do projeto informado em Projetos padrao e preenche Query padrao com o ID escolhido.
+                </p>
+              </div>
               <div className="flex flex-col gap-2">
                 <label className="text-xs font-semibold text-slate-700">Status padrao</label>
                 <select
@@ -534,15 +658,6 @@ const PromptReportsPage: React.FC = () => {
                   <option value="open">Abertos</option>
                   <option value="closed">Fechados</option>
                 </select>
-              </div>
-              <div className="flex flex-col gap-2">
-                <label className="text-xs font-semibold text-slate-700">Agendamento CRON</label>
-                <input
-                  className="rounded-lg border border-slate-200 px-3 py-2 font-mono"
-                  value={form.schedule_cron}
-                  onChange={(e) => setForm((prev) => ({ ...prev, schedule_cron: e.target.value }))}
-                  placeholder="0 8 * * 1"
-                />
               </div>
               <div className="flex flex-col gap-2">
                 <label className="text-xs font-semibold text-slate-700">Data inicio padrao</label>
@@ -564,16 +679,54 @@ const PromptReportsPage: React.FC = () => {
               </div>
             </div>
 
-            <div className="mt-4 flex items-center gap-2">
-              <input
-                id="template-enabled"
-                type="checkbox"
-                checked={form.is_enabled}
-                onChange={(e) => setForm((prev) => ({ ...prev, is_enabled: e.target.checked }))}
-              />
-              <label htmlFor="template-enabled" className="text-sm text-slate-700">
-                                Template habilitado para execucao agendada
-              </label>
+            <div className="mt-5 rounded-lg border border-slate-200 bg-slate-50 p-4">
+              <div className="flex items-center gap-2">
+                <input
+                  id="schedule-enabled"
+                  type="checkbox"
+                  checked={form.schedule_enabled}
+                  onChange={(e) => setForm((prev) => ({ ...prev, schedule_enabled: e.target.checked }))}
+                />
+                <label htmlFor="schedule-enabled" className="text-sm font-bold text-slate-800">
+                  Agendar execucao automatica
+                </label>
+              </div>
+
+              {form.schedule_enabled && (
+                <div className="mt-4 grid grid-cols-1 gap-4 md:grid-cols-3">
+                  <div className="flex flex-col gap-2">
+                    <label className="text-xs font-semibold text-slate-700">Hora</label>
+                    <input
+                      type="time"
+                      className="rounded-lg border border-slate-200 bg-white px-3 py-2"
+                      value={form.schedule_time}
+                      onChange={(e) => setForm((prev) => ({ ...prev, schedule_time: e.target.value }))}
+                    />
+                  </div>
+                  <div className="flex flex-col gap-2 md:col-span-2">
+                    <label className="text-xs font-semibold text-slate-700">Dias que deve rodar</label>
+                    <div className="flex flex-wrap gap-2">
+                      {WEEK_DAYS.map((day) => (
+                        <button
+                          key={day.value}
+                          type="button"
+                          onClick={() => toggleScheduleDay(day.value)}
+                          className={`rounded-lg border px-3 py-2 text-xs font-bold ${
+                            form.schedule_days.includes(day.value)
+                              ? 'border-blue-300 bg-blue-50 text-blue-700'
+                              : 'border-slate-200 bg-white text-slate-600'
+                          }`}
+                        >
+                          {day.label}
+                        </button>
+                      ))}
+                    </div>
+                    <p className="text-xs text-slate-500">
+                      O periodo do relatorio continua sendo definido nas datas inicio e fim acima.
+                    </p>
+                  </div>
+                </div>
+              )}
             </div>
 
             <div className="mt-6 flex flex-wrap gap-3">

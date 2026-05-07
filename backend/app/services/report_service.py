@@ -2,9 +2,10 @@ from __future__ import annotations
 
 import re
 import time
-from datetime import date
+from datetime import date, datetime
 from typing import Any, Iterable
 
+import httpx
 from sqlalchemy.orm import Session
 
 from app.adapters.redmine import RedmineAdapter
@@ -181,6 +182,7 @@ def generate_redmine_report(
     end_date: date,
     status_id: str | None = None,
     query_id: str | None = None,
+    prompt_options: dict[str, Any] | None = None,
 ) -> Report:
     mapping_rules = _get_mapping(db, "redmine_fields", connector_id=connector.id)
     normalization_rules = _get_mapping(db, "normalization_dictionary", connector_id=connector.id)
@@ -203,6 +205,7 @@ def generate_redmine_report(
             "end_date": str(end_date),
             "status_id": status_id,
             "query_id": query_id,
+            "prompt_options": prompt_options or {},
             "status": "running",
         },
         status="running",
@@ -213,52 +216,127 @@ def generate_redmine_report(
 
     rows: list[ReportRow] = []
     errors: list[str] = []
+    diagnostics: list[dict[str, Any]] = []
 
     target_projects = project_ids or [None]
     for project_id in target_projects:
         try:
-            issues = adapter.fetch_issues(
+            issues = list(adapter.fetch_issues(
                 project_id,
                 start_date,
                 end_date,
                 status_id=status_id,
                 query_id=query_id,
+                apply_date_filter=not bool(prompt_options and prompt_options.get("overdue_only")),
+            ))
+            project_rows = _issues_to_report_rows(
+                report_id=report.id,
+                issues=issues,
+                connector=connector,
+                mapping_rules=mapping_rules,
+                normalization_rules=normalization_rules,
+                regex_rules=regex_rules,
+                prompt_options=prompt_options,
             )
-            for issue in issues:
-                extracted = _merge_values(
-                    _extract_by_order(issue, mapping_rules)
+            diagnostics.append(
+                {
+                    "project_id": project_id,
+                    "query_id": query_id,
+                    "source": "saved_query" if query_id else "direct_filters",
+                    "redmine_issues": len(issues),
+                    "rows_after_prompt_filters": len(project_rows),
+                }
+            )
+
+            if (
+                not project_rows
+                and query_id
+                and status_id == "open"
+                and prompt_options
+                and prompt_options.get("overdue_only")
+            ):
+                fallback_issues = list(adapter.fetch_issues(
+                    project_id,
+                    start_date,
+                    end_date,
+                    status_id=status_id,
+                    query_id=None,
+                    apply_date_filter=False,
+                ))
+                fallback_rows = _issues_to_report_rows(
+                    report_id=report.id,
+                    issues=fallback_issues,
+                    connector=connector,
+                    mapping_rules=mapping_rules,
+                    normalization_rules=normalization_rules,
+                    regex_rules=regex_rules,
+                    prompt_options=prompt_options,
                 )
-                options = normalization_rules.get("options", {})
-                dictionary = normalization_rules.get("dictionary", normalization_rules)
-                normalized = _apply_normalization(extracted, dictionary, options, regex_rules)
-                rows.append(
-                    ReportRow(
-                        report_id=report.id,
-                        cliente=normalized.get("cliente"),
-                        sistema=normalized.get("sistema"),
-                        entrega=normalized.get("entrega"),
-                        source_ref=str(issue.get("id")) if issue.get("id") else None,
-                        source_url=_issue_url(connector.config_json.get("base_url"), issue.get("id")),
-                    )
+                diagnostics.append(
+                    {
+                        "project_id": project_id,
+                        "query_id": None,
+                        "source": "direct_filters_fallback",
+                        "reason": "saved_query_returned_no_rows_after_prompt_filters",
+                        "redmine_issues": len(fallback_issues),
+                        "rows_after_prompt_filters": len(fallback_rows),
+                    }
                 )
+                project_rows = fallback_rows
+
+            rows.extend(project_rows)
         except Exception as exc:  # noqa: BLE001
-            errors.append(f"{project_id}: {exc}")
+            errors.append(f"{project_id}: {_format_redmine_error(exc)}")
+
+    if prompt_options and prompt_options.get("sort_overdue_first"):
+        rows.sort(key=_report_row_sort_key)
 
     db.add_all(rows)
     db.commit()
 
     duration = round((time.time() - started) * 1000)
-    report.status = "completed" if not errors else "completed_with_errors"
-    report.params_json.update(
-        {
-            "duration_ms": duration,
-            "records": len(rows),
-            "errors": errors,
-        }
-    )
+    report.status = "completed" if not errors else ("failed" if not rows else "completed_with_errors")
+    report.params_json = {
+        **(report.params_json or {}),
+        "duration_ms": duration,
+        "records": len(rows),
+        "errors": errors,
+        "diagnostics": diagnostics,
+    }
     db.commit()
     db.refresh(report)
     return report
+
+
+def _issues_to_report_rows(
+    report_id: int,
+    issues: Iterable[dict[str, Any]],
+    connector: Connector,
+    mapping_rules: dict[str, Any],
+    normalization_rules: dict[str, Any],
+    regex_rules: dict[str, Any],
+    prompt_options: dict[str, Any] | None = None,
+) -> list[ReportRow]:
+    rows: list[ReportRow] = []
+    for issue in issues:
+        if prompt_options and prompt_options.get("overdue_only") and not _is_overdue(issue):
+            continue
+        extracted = _merge_values(_extract_by_order(issue, mapping_rules))
+        options = normalization_rules.get("options", {})
+        dictionary = normalization_rules.get("dictionary", normalization_rules)
+        normalized = _apply_normalization(extracted, dictionary, options, regex_rules)
+        rows.append(
+            ReportRow(
+                report_id=report_id,
+                cliente=normalized.get("cliente"),
+                sistema=normalized.get("sistema"),
+                entrega=normalized.get("entrega"),
+                source_ref=str(issue.get("id")) if issue.get("id") else None,
+                source_url=_issue_url(connector.config_json.get("base_url"), issue.get("id")),
+                raw_json=_issue_report_metadata(issue),
+            )
+        )
+    return rows
 
 
 def _extract_by_order(issue: dict[str, Any], mapping_rules: dict[str, Any]) -> list[dict[str, str | None]]:
@@ -272,6 +350,80 @@ def _extract_by_order(issue: dict[str, Any], mapping_rules: dict[str, Any]) -> l
         elif source == "subject_regex":
             values.append(_extract_from_subject_regex(issue, mapping_rules.get("subject_regex", {})))
     return values
+
+
+def _parse_redmine_date(value: Any) -> date | None:
+    if not value:
+        return None
+    text = str(value)
+    for pattern in ("%Y-%m-%d", "%Y-%m-%dT%H:%M:%SZ"):
+        try:
+            return datetime.strptime(text, pattern).date()
+        except ValueError:
+            continue
+    try:
+        return datetime.fromisoformat(text.replace("Z", "+00:00")).date()
+    except ValueError:
+        return None
+
+
+def _format_redmine_error(exc: Exception) -> str:
+    if isinstance(exc, httpx.ConnectError):
+        request = getattr(exc, "request", None)
+        url = str(request.url) if request else ""
+        return f"falha de conexao com o Redmine{f' em {url}' if url else ''}: {exc}"
+    if isinstance(exc, httpx.HTTPStatusError):
+        response = exc.response
+    return f"HTTP {response.status_code} ao consultar {response.url}: {response.text[:300]}"
+    if isinstance(exc, httpx.RequestError):
+        request = getattr(exc, "request", None)
+        url = str(request.url) if request else ""
+        return f"erro de rede ao consultar Redmine{f' em {url}' if url else ''}: {exc}"
+    return str(exc)
+
+
+def _nested_name(issue: dict[str, Any], key: str) -> str | None:
+    value = issue.get(key)
+    if isinstance(value, dict):
+        return value.get("name")
+    return str(value) if value else None
+
+
+def _is_closed(issue: dict[str, Any]) -> bool:
+    status = issue.get("status")
+    if isinstance(status, dict):
+        return bool(status.get("is_closed")) or str(status.get("name", "")).lower() in {"fechado", "closed"}
+    return False
+
+
+def _is_overdue(issue: dict[str, Any]) -> bool:
+    due_date = _parse_redmine_date(issue.get("due_date"))
+    return bool(due_date and due_date < date.today() and not _is_closed(issue))
+
+
+def _issue_report_metadata(issue: dict[str, Any]) -> dict[str, Any]:
+    due_date = _parse_redmine_date(issue.get("due_date"))
+    days_overdue = (date.today() - due_date).days if due_date and due_date < date.today() else 0
+    return {
+        "subject": issue.get("subject"),
+        "tracker": _nested_name(issue, "tracker"),
+        "status": _nested_name(issue, "status"),
+        "priority": _nested_name(issue, "priority"),
+        "assigned_to": _nested_name(issue, "assigned_to"),
+        "author": _nested_name(issue, "author"),
+        "created_on": issue.get("created_on"),
+        "updated_on": issue.get("updated_on"),
+        "due_date": issue.get("due_date"),
+        "done_ratio": issue.get("done_ratio"),
+        "is_overdue": _is_overdue(issue),
+        "days_overdue": days_overdue,
+    }
+
+
+def _report_row_sort_key(row: ReportRow) -> tuple[int, str, str]:
+    raw = row.raw_json or {}
+    due_date = str(raw.get("due_date") or "9999-12-31")
+    return (0 if raw.get("is_overdue") else 1, due_date, row.source_ref or "")
 
 
 def _extract_by_order_with_source(issue: dict[str, Any], mapping_rules: dict[str, Any]) -> list[tuple[str, dict[str, str | None]]]:

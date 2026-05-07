@@ -32,6 +32,7 @@ class ReportRowOut(BaseModel):
     entrega: Optional[str] = None
     source_ref: Optional[str] = None
     source_url: Optional[str] = None
+    raw_json: Optional[dict[str, Any]] = None
     created_at: datetime
 
     class Config:

@@ -68,6 +68,7 @@ class ReportRow(Base):
     entrega = Column(String(200), nullable=True)
     source_ref = Column(String(120), nullable=True)
     source_url = Column(String(500), nullable=True)
+    raw_json = Column(JSONB, nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
     report = relationship("Report", back_populates="rows")

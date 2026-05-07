@@ -8,9 +8,10 @@ import { Table } from '../components/Table';
 import { Toasts, ToastItem } from '../components/Toasts';
 import { listConnectors, listRedmineQueries, Connector, RedmineQuery } from '../api/connectors';
 import { generateRedmineReport, getReport, exportReportCsv, exportReportPdf, ReportDetail } from '../api/reports';
+import { runPromptReportTemplate } from '../api/promptReports';
 
 const ReportsRedminePage: React.FC = () => {
-  const [searchParams] = useSearchParams();
+  const [searchParams, setSearchParams] = useSearchParams();
   const [connectors, setConnectors] = useState<Connector[]>([]);
   const [connectorId, setConnectorId] = useState<number | null>(null);
   const [projectIds, setProjectIds] = useState('');
@@ -28,6 +29,10 @@ const ReportsRedminePage: React.FC = () => {
   const [page, setPage] = useState(1);
   const [error, setError] = useState<string | null>(null);
   const [toasts, setToasts] = useState<ToastItem[]>([]);
+  const [editablePrompt, setEditablePrompt] = useState('');
+  const [rerunning, setRerunning] = useState(false);
+  const reportIdParam = searchParams.get('report_id');
+  const isViewingExistingReport = Boolean(reportIdParam);
 
   const getConnectorProjectIds = (id: number | null) => {
     if (!id) return [];
@@ -40,8 +45,9 @@ const ReportsRedminePage: React.FC = () => {
   const loadConnectors = async () => {
     const data = await listConnectors();
     setConnectors(data);
-    if (data.length && !connectorId) {
-      setConnectorId(data[0].id);
+    if (data.length && !connectorId && !isViewingExistingReport) {
+      const redmineConnector = data.find((item) => item.type === 'redmine');
+      setConnectorId((redmineConnector || data[0]).id);
     }
   };
 
@@ -50,7 +56,6 @@ const ReportsRedminePage: React.FC = () => {
   }, []);
 
   useEffect(() => {
-    const reportIdParam = searchParams.get('report_id');
     const reportId = Number(reportIdParam);
     if (!reportIdParam || !Number.isFinite(reportId) || reportId <= 0) {
       return;
@@ -65,6 +70,8 @@ const ReportsRedminePage: React.FC = () => {
         if (!active) return;
         setReport(detail);
         setPage(1);
+        applyReportParams(detail);
+        setEditablePrompt(String(detail.report.params_json?.prompt_used || ''));
         pushToast({ title: 'Relatorio carregado', description: `Exibindo relatorio #${reportId}.`, tone: 'success' });
       })
       .catch(() => {
@@ -78,16 +85,22 @@ const ReportsRedminePage: React.FC = () => {
     return () => {
       active = false;
     };
-  }, [searchParams]);
+  }, [reportIdParam]);
 
   useEffect(() => {
+    if (isViewingExistingReport) return;
     if (!connectorId || !connectors.length) return;
     const connectorProjects = getConnectorProjectIds(connectorId);
     if (!connectorProjects.length) return;
     const joined = connectorProjects.join(', ');
     setProjectIds(joined);
     setQueriesProjectId(normalizeProjectId(connectorProjects[0]));
-  }, [connectorId, connectors]);
+  }, [connectorId, connectors, isViewingExistingReport]);
+
+  useEffect(() => {
+    if (!report || !connectors.length) return;
+    applyReportParams(report);
+  }, [connectors]);
 
   const pushToast = (toast: Omit<ToastItem, 'id'>) => {
     const id = `${Date.now()}-${Math.random()}`;
@@ -118,12 +131,44 @@ const ReportsRedminePage: React.FC = () => {
     return trimmed.toLowerCase();
   };
 
-  const buildQueryUrl = (projectId: string, qid: string) => {
+  const buildQueryUrl = (_projectId: string, qid: string) => {
     const connector = connectors.find((item) => item.id === connectorId);
     const baseUrl = connector?.config_json?.base_url?.replace(/\/$/, '');
-    const normalizedProject = normalizeProjectId(projectId);
-    if (!baseUrl || !normalizedProject || !qid) return '';
-    return `${baseUrl}/projects/${normalizedProject}/issues?query_id=${qid}`;
+    if (!baseUrl || !qid) return '';
+    return `${baseUrl}/issues?query_id=${qid}`;
+  };
+
+  const setQueryIdAndUrl = (value: string) => {
+    setQueryId(value);
+    const built = buildQueryUrl('', value.trim());
+    setQueryUrl(built);
+  };
+
+  const applyReportParams = (detail: ReportDetail) => {
+    const params = detail.report.params_json || {};
+    const nextConnectorId = Number(params.connector_id);
+    const nextProjects = Array.isArray(params.project_ids)
+      ? params.project_ids.map((item: unknown) => String(item)).join(', ')
+      : '';
+    const nextQueryId = params.query_id ? String(params.query_id) : '';
+    const nextStart = params.start_date ? String(params.start_date) : '';
+    const nextEnd = params.end_date ? String(params.end_date) : '';
+    const nextStatus = params.status_id ? String(params.status_id) : '';
+
+    if (Number.isFinite(nextConnectorId) && nextConnectorId > 0) {
+      setConnectorId(nextConnectorId);
+    }
+    setProjectIds(nextProjects);
+    setQueriesProjectId(nextProjects.split(',').map((item) => normalizeProjectId(item)).filter(Boolean)[0] || '');
+    setQueryId(nextQueryId);
+    setStartDate(nextStart);
+    setEndDate(nextEnd);
+    setStatusId(nextStatus);
+    setEditablePrompt(String(params.prompt_used || ''));
+
+    const connector = connectors.find((item) => item.id === nextConnectorId);
+    const baseUrl = connector?.config_json?.base_url?.replace(/\/$/, '');
+    setQueryUrl(baseUrl && nextQueryId ? `${baseUrl}/issues?query_id=${nextQueryId}` : '');
   };
 
   const handleGenerate = async () => {
@@ -175,6 +220,41 @@ const ReportsRedminePage: React.FC = () => {
     const detail = await getReport(report.report.id, { page: nextPage, page_size: report.page_size, q: query || undefined });
     setReport(detail);
     setPage(nextPage);
+  };
+
+  const handleRerunFromPrompt = async () => {
+    if (!report) return;
+    const templateId = Number(report.report.params_json?.template_id);
+    const promptOverride = editablePrompt.trim();
+    if (!Number.isFinite(templateId) || templateId <= 0) {
+      setError('Este relatorio nao tem template vinculado para executar novamente.');
+      return;
+    }
+    if (!promptOverride) {
+      setError('Informe o prompt antes de executar novamente.');
+      return;
+    }
+
+    setRerunning(true);
+    setLoading(true);
+    setError(null);
+    pushToast({ title: 'Executando novamente', description: 'Gerando um novo relatorio com o prompt editado.', tone: 'info' });
+    try {
+      const result = await runPromptReportTemplate(templateId, promptOverride);
+      const detail = await getReport(result.report_id, { page: 1, page_size: report.page_size || 10 });
+      setReport(detail);
+      setPage(1);
+      applyReportParams(detail);
+      setSearchParams({ report_id: String(result.report_id) });
+      pushToast({ title: 'Novo relatorio gerado', description: `Relatorio #${result.report_id} carregado.`, tone: 'success' });
+    } catch (err: any) {
+      const detail = err?.response?.data?.detail || 'Falha ao executar novamente com o prompt editado.';
+      setError(String(detail));
+      pushToast({ title: 'Falha ao executar novamente', description: String(detail), tone: 'error' });
+    } finally {
+      setRerunning(false);
+      setLoading(false);
+    }
   };
 
   const handleLoadQueries = async () => {
@@ -238,10 +318,161 @@ const ReportsRedminePage: React.FC = () => {
     link.remove();
   };
 
+  const hasRedmineDetails = Boolean(report?.rows.some((row) => row.raw_json));
+  type ReportDisplayRow = ReportDetail['rows'][number] & {
+    assunto: string;
+    status_redmine: string;
+    responsavel: string;
+    data_prevista: string;
+    alterado_em: string;
+    dias_atraso: string | number;
+    prioridade: string;
+    tipo: string;
+    autor: string;
+    percentual_concluido: string | number;
+  };
+  const promptColumnMap: Record<string, { key: keyof ReportDisplayRow; label: string }> = {
+    source_ref: { key: 'source_ref', label: 'ID' },
+    subject: { key: 'assunto', label: 'Titulo' },
+    assigned_to: { key: 'responsavel', label: 'Atribuido para' },
+    due_date: { key: 'data_prevista', label: 'Data prevista' },
+    updated_on: { key: 'alterado_em', label: 'Alterado em' },
+    status: { key: 'status_redmine', label: 'Status' },
+    priority: { key: 'prioridade', label: 'Prioridade' },
+    tracker: { key: 'tipo', label: 'Tipo' },
+    author: { key: 'autor', label: 'Autor' },
+    done_ratio: { key: 'percentual_concluido', label: '% concluido' },
+  };
+  const promptColumns = Array.isArray(report?.report.params_json?.prompt_options?.columns)
+    ? report?.report.params_json?.prompt_options?.columns
+        .map((item: any) => {
+          const mapped = promptColumnMap[String(item?.key || '')];
+          return mapped ? { ...mapped, label: String(item?.label || mapped.label) } : null;
+        })
+        .filter(Boolean)
+    : null;
+  const reportColumns: { key: keyof ReportDisplayRow; label: string }[] = hasRedmineDetails
+    ? (promptColumns?.length ? promptColumns : [
+        { key: 'source_ref', label: 'ID' },
+        { key: 'assunto', label: 'Titulo' },
+        { key: 'responsavel', label: 'Atribuido para' },
+        { key: 'data_prevista', label: 'Data prevista' },
+        { key: 'alterado_em', label: 'Alterado em' },
+        { key: 'dias_atraso', label: 'Dias atraso' },
+        { key: 'status_redmine', label: 'Status' },
+      ])
+    : [
+        { key: 'cliente', label: 'Cliente' },
+        { key: 'sistema', label: 'Sistema' },
+        { key: 'entrega', label: 'Entrega' },
+        { key: 'source_ref', label: 'source_ref' },
+        { key: 'source_url', label: 'source_url' },
+      ];
+  const reportRows: ReportDisplayRow[] = (report?.rows || []).map((row) => ({
+    ...row,
+    assunto: row.raw_json?.subject || '',
+    status_redmine: row.raw_json?.status || '',
+    responsavel: row.raw_json?.assigned_to || '',
+    data_prevista: row.raw_json?.due_date || '',
+    alterado_em: row.raw_json?.updated_on || '',
+    dias_atraso: row.raw_json?.days_overdue ?? '',
+    prioridade: row.raw_json?.priority || '',
+    tipo: row.raw_json?.tracker || '',
+    autor: row.raw_json?.author || '',
+    percentual_concluido: row.raw_json?.done_ratio ?? '',
+  }));
+  const reportParams = report?.report.params_json || {};
+  const reportErrors = Array.isArray(reportParams.errors) ? reportParams.errors.filter(Boolean) : [];
+
   return (
     <AppShell>
-      <Topbar title="Relatorio Redmine" subtitle="Gere relatorios consolidados e exporte para CSV ou PDF." />
+      <Topbar
+        title={isViewingExistingReport ? `Resultado do Relatorio #${report?.report.id || reportIdParam}` : 'Relatorio Redmine'}
+        subtitle={isViewingExistingReport ? 'Resultado gerado a partir do prompt/template.' : 'Gere relatorios consolidados e exporte para CSV ou PDF.'}
+      />
 
+      {isViewingExistingReport && report && (
+        <section className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
+          <div className="grid grid-cols-1 gap-4 md:grid-cols-5">
+            <div>
+              <p className="text-xs font-semibold uppercase text-slate-500">Status</p>
+              <p className="mt-1 text-sm font-bold text-slate-800">{report.report.status}</p>
+            </div>
+            <div>
+              <p className="text-xs font-semibold uppercase text-slate-500">Projeto</p>
+              <p className="mt-1 text-sm font-bold text-slate-800">
+                {Array.isArray(reportParams.project_ids) ? reportParams.project_ids.join(', ') : '-'}
+              </p>
+            </div>
+            <div>
+              <p className="text-xs font-semibold uppercase text-slate-500">Query</p>
+              <p className="mt-1 text-sm font-bold text-slate-800">{reportParams.query_id || '-'}</p>
+            </div>
+            <div>
+              <p className="text-xs font-semibold uppercase text-slate-500">Periodo</p>
+              <p className="mt-1 text-sm font-bold text-slate-800">
+                {reportParams.start_date || '-'} a {reportParams.end_date || '-'}
+              </p>
+            </div>
+            <div>
+              <p className="text-xs font-semibold uppercase text-slate-500">Registros</p>
+              <p className="mt-1 text-sm font-bold text-slate-800">{reportParams.records ?? report.total}</p>
+            </div>
+          </div>
+          {reportParams.prompt_used && (
+            <div className="mt-4 rounded-lg bg-slate-50 p-3 text-sm text-slate-700">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <p className="font-semibold text-slate-800">Prompt usado</p>
+                <button
+                  type="button"
+                  onClick={handleRerunFromPrompt}
+                  disabled={rerunning || loading}
+                  className="inline-flex items-center gap-2 rounded-lg bg-primary px-3 py-1.5 text-xs font-bold text-white hover:bg-primary-dark disabled:opacity-60"
+                >
+                  <Play size={14} />
+                  {rerunning ? 'Executando...' : 'Executar novamente'}
+                </button>
+              </div>
+              <textarea
+                className="mt-2 min-h-44 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 font-mono text-xs text-slate-800"
+                value={editablePrompt}
+                onChange={(e) => setEditablePrompt(e.target.value)}
+              />
+              <p className="mt-2 text-xs text-slate-500">
+                Altere o prompt e execute novamente para gerar um novo relatorio.
+              </p>
+            </div>
+          )}
+          {reportErrors.length > 0 && (
+            <div className="mt-4 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
+              <p className="font-semibold">Execucao concluida com avisos</p>
+              <ul className="mt-1 list-disc pl-5">
+                {reportErrors.map((item: string, index: number) => (
+                  <li key={index}>{item}</li>
+                ))}
+              </ul>
+            </div>
+          )}
+          <div className="mt-4 flex flex-wrap gap-3">
+            <button
+              onClick={handleExport}
+              className="flex items-center gap-2 rounded-lg border border-slate-200 px-4 py-2 text-sm font-semibold text-slate-700"
+            >
+              <Download size={16} />
+              Exportar CSV
+            </button>
+            <button
+              onClick={handleExportPdf}
+              className="flex items-center gap-2 rounded-lg border border-slate-200 px-4 py-2 text-sm font-semibold text-slate-700"
+            >
+              <Download size={16} />
+              Exportar PDF
+            </button>
+          </div>
+        </section>
+      )}
+
+      {!isViewingExistingReport && (
       <section className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
         <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
           <div className="flex flex-col gap-2">
@@ -309,14 +540,14 @@ const ReportsRedminePage: React.FC = () => {
               className="rounded-lg border border-slate-200 px-3 py-2"
               placeholder="8117"
               value={queryId}
-              onChange={(e) => setQueryId(e.target.value)}
+              onChange={(e) => setQueryIdAndUrl(e.target.value)}
             />
           </div>
           <div className="flex flex-col gap-2 md:col-span-2">
             <label className="text-sm font-semibold text-slate-700">URL da Query</label>
             <input
               className="rounded-lg border border-slate-200 px-3 py-2"
-              placeholder="https://redmine.../projects/asm-dem/issues?query_id=8117"
+              placeholder="https://redmine.../issues?query_id=8117"
               value={queryUrl}
               onChange={(e) => setQueryUrl(e.target.value)}
               onBlur={handleParseUrl}
@@ -332,7 +563,7 @@ const ReportsRedminePage: React.FC = () => {
               value={queryId}
               onChange={(e) => {
                 const nextId = e.target.value;
-                setQueryId(nextId);
+                setQueryIdAndUrl(nextId);
                 if (queriesProjectId) {
                   setProjectIds(queriesProjectId);
                 }
@@ -342,8 +573,6 @@ const ReportsRedminePage: React.FC = () => {
                       .split(',')
                       .map((item) => normalizeProjectId(item))
                       .filter(Boolean)[0] || queriesProjectId;
-                  const built = buildQueryUrl(primaryProject, nextId);
-                  if (built) setQueryUrl(built);
                   if (!primaryProject) {
                     pushToast({
                       title: 'Informe o projeto',
@@ -416,6 +645,7 @@ const ReportsRedminePage: React.FC = () => {
         </div>
         {loading && <p className="mt-3 text-xs font-semibold text-blue-600">Gerando relatorio, aguarde...</p>}
       </section>
+      )}
 
       {error && <StateBlock tone="error" title="Erro" description={error} />}
       {!report && !error && <StateBlock tone="empty" title="Nenhum relatorio gerado" description="Preencha os filtros e gere o relatorio." />}
@@ -423,14 +653,8 @@ const ReportsRedminePage: React.FC = () => {
       {report && (
         <section className="flex flex-col gap-4">
           <Table
-            columns={[
-              { key: 'cliente', label: 'Cliente' },
-              { key: 'sistema', label: 'Sistema' },
-              { key: 'entrega', label: 'Entrega' },
-              { key: 'source_ref', label: 'source_ref' },
-              { key: 'source_url', label: 'source_url' },
-            ]}
-            data={report.rows}
+            columns={reportColumns}
+            data={reportRows}
             emptyMessage="Nenhum registro encontrado para o periodo."
           />
           <div className="flex items-center justify-between text-sm text-slate-500">

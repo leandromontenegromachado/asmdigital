@@ -120,6 +120,23 @@ def update_automation(
     return automation
 
 
+@router.delete("/{automation_id}", status_code=204)
+def delete_automation(
+    automation_id: int,
+    db: Session = Depends(get_db),
+    _user=Depends(get_current_user),
+):
+    automation = db.query(Automation).filter(Automation.id == automation_id).first()
+    if not automation:
+        raise HTTPException(status_code=404, detail="Automation not found")
+
+    db.query(AutomationRun).filter(AutomationRun.automation_id == automation.id).delete(synchronize_session=False)
+    db.delete(automation)
+    db.commit()
+    sync_automation_jobs(db, scheduler)
+    return None
+
+
 @router.post("/{automation_id}/run", response_model=AutomationRunOut)
 def run_automation_endpoint(
     automation_id: int,

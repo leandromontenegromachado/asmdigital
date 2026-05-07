@@ -32,7 +32,7 @@ class AutomationRunOut(BaseModel):
 
 
 class AutomationRunRequest(BaseModel):
-    simulation: bool = True
+    simulation: bool = False
 
 
 class AutomationUpdate(BaseModel):

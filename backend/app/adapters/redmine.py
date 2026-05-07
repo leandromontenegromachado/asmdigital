@@ -22,7 +22,7 @@ class RedmineAdapter:
             timeout=self.timeout,
         )
 
-    @retry(stop=stop_after_attempt(settings.redmine_retry_attempts), wait=wait_fixed(settings.redmine_retry_wait_seconds))
+    @retry(stop=stop_after_attempt(settings.redmine_retry_attempts), wait=wait_fixed(settings.redmine_retry_wait_seconds), reraise=True)
     def test_connection(self) -> dict[str, Any]:
         with self._client() as client:
             response = client.get("/projects.json", params={"limit": 1})
@@ -36,6 +36,7 @@ class RedmineAdapter:
         stop=stop_after_attempt(settings.redmine_retry_attempts),
         wait=wait_fixed(settings.redmine_retry_wait_seconds),
         retry=retry_if_exception_type(httpx.RequestError),
+        reraise=True,
     )
     def fetch_queries(self, project_id: str | None = None) -> list[dict[str, Any]]:
         with self._client() as client:
@@ -45,6 +46,8 @@ class RedmineAdapter:
                 project_response = client.get(f"/projects/{project_id}/queries.json", params=params)
                 if project_response.status_code == 404:
                     project_response = client.get("/queries.json", params={"limit": 100, "project_id": project_id})
+                if project_response.status_code == 404:
+                    return []
                 project_response.raise_for_status()
                 data = project_response.json()
             else:
@@ -59,7 +62,7 @@ class RedmineAdapter:
                     data = response.json()
         return data.get("queries", []) or []
 
-    @retry(stop=stop_after_attempt(settings.redmine_retry_attempts), wait=wait_fixed(settings.redmine_retry_wait_seconds))
+    @retry(stop=stop_after_attempt(settings.redmine_retry_attempts), wait=wait_fixed(settings.redmine_retry_wait_seconds), reraise=True)
     def _fetch_page(
         self,
         project_id: str | None,
@@ -93,6 +96,7 @@ class RedmineAdapter:
         end_date: date,
         status_id: str | None = None,
         query_id: str | None = None,
+        apply_date_filter: bool = True,
     ) -> Iterable[dict[str, Any]]:
         limit = 100
         offset = 0
@@ -102,6 +106,9 @@ class RedmineAdapter:
             total = payload.get("total_count", 0)
             issues = payload.get("issues", [])
             for issue in issues:
+                if not apply_date_filter:
+                    yield issue
+                    continue
                 created_on = self._parse_datetime(issue.get("created_on"))
                 if created_on is None:
                     yield issue
