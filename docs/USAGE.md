@@ -1,141 +1,872 @@
-# Documentação de Uso Técnico - ASM Digital (MVP)
+# Guia de Uso - ASM Digital
 
-## 1) Visão geral
-Este MVP permite:
-- configurar conectores (Redmine) em modo leitura;
-- normalizar campos (Cliente/Sistema/Entrega) via mapeamento;
-- gerar relatórios consolidados com filtros e exportação CSV/PDF;
-- executar automações (mock) e registrar auditoria.
+Este documento descreve como usar, operar e publicar o ASM Digital. Ele cobre os módulos atuais do sistema: autenticação, conectores, relatórios Redmine, relatórios por linguagem natural, rotinas, funcionários, notificações inteligentes, avaliação, ChefIA/Fala AI e integrações MCP.
 
-## 2) Pré-requisitos
-- Docker + Docker Compose (Docker Desktop no Windows).
+## 1. Visão Geral
 
-## 3) Como rodar
-```bash
-docker compose up --build
-```
+O ASM Digital é uma aplicação web para apoiar gestão operacional, relatórios e automações internas.
 
-## 4) URLs
-- Frontend: http://localhost:3000
-- Backend (API): http://localhost:8000
-- Swagger: http://localhost:8000/docs
+Principais capacidades:
 
-## 5) Credenciais admin (seed automático)
-As credenciais são criadas automaticamente no primeiro boot, com base no `.env`.
+- Configurar conectores corporativos, principalmente Redmine e Azure DevOps.
+- Gerar relatórios Redmine com filtros, consulta salva, CSV e PDF.
+- Criar prompts reutilizáveis para relatórios por linguagem natural.
+- Executar relatórios sob demanda ou por agendamento.
+- Gerenciar rotinas automatizadas.
+- Cadastrar funcionários reutilizáveis por notificações e avaliação.
+- Configurar notificações inteligentes por rotina.
+- Registrar histórico de execuções e notificações.
+- Apoiar processos de avaliação e promoção.
+- Usar ChefIA/Fala AI para check-ins, lembretes e relatórios.
 
-```
+## 2. Acesso ao Sistema
+
+URLs padrão em ambiente local:
+
+- Frontend: `http://localhost:3000`
+- Backend: `http://localhost:8000`
+- Swagger/OpenAPI: `http://localhost:8000/docs`
+
+Credenciais iniciais são criadas automaticamente no primeiro boot:
+
+```env
 ADMIN_EMAIL=admin@company.com
 ADMIN_PASSWORD=admin123
 ```
 
-## 6) Variáveis de ambiente
-Arquivo `.env.example` (copiar para `.env`):
-- `POSTGRES_DB`, `POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_PORT`
-- `DATABASE_URL` (SQLAlchemy)
-- `JWT_SECRET`, `JWT_EXPIRE_MINUTES`
-- `ADMIN_EMAIL`, `ADMIN_PASSWORD`
-- `REDMINE_DEFAULT_TIMEOUT`, `REDMINE_RETRY_ATTEMPTS`, `REDMINE_RETRY_WAIT_SECONDS`
-- `TEAMS_WEBHOOK_URL` (opcional)
-- `NOTIFICATIONS_SIMULATION` (true/false)
+No servidor de teste, use a URL publicada pela máquina, por exemplo:
 
-## 7) Autenticação
-- `POST /api/auth/login` → retorna `access_token`.
-- `GET /api/auth/me` → retorna dados do usuário logado.
-- O frontend salva o token e envia no header: `Authorization: Bearer <token>`.
+```text
+http://pro-pae-4095:3000/login
+```
 
-## 8) Conector Redmine
-### Cadastro (UI)
+## 3. Subir a Aplicação
+
+### 3.1. Subir localmente
+
+Na raiz do projeto:
+
+```bash
+docker compose up -d --build
+```
+
+Verificar containers:
+
+```bash
+docker compose ps
+```
+
+Ver logs:
+
+```bash
+docker compose logs -f backend
+docker compose logs -f frontend
+```
+
+Validar saúde:
+
+```bash
+curl http://localhost:8000/health
+curl -I http://localhost:3000/login
+```
+
+### 3.2. Atualizar servidor de teste
+
+No servidor:
+
+```bash
+cd ~/asmdigital
+git pull origin main
+docker compose build backend frontend
+docker compose up -d db backend frontend redmine-mcp
+docker compose ps
+```
+
+Se houver migração nova, o backend executa Alembic automaticamente ao subir.
+
+Verificar logs após atualização:
+
+```bash
+docker compose logs --tail 120 backend
+```
+
+## 4. Variáveis de Ambiente
+
+Use `.env.example` como base para `.env`.
+
+Principais variáveis:
+
+```env
+POSTGRES_DB=asmdigital
+POSTGRES_USER=postgres
+POSTGRES_PASSWORD=postgres
+DATABASE_URL=postgresql+psycopg2://postgres:postgres@db:5432/asmdigital
+
+ADMIN_EMAIL=admin@company.com
+ADMIN_PASSWORD=admin123
+CORS_ORIGINS=http://localhost:3000
+APP_PUBLIC_URL=http://localhost:3000
+
+REDMINE_DEFAULT_TIMEOUT=20
+REDMINE_RETRY_ATTEMPTS=3
+REDMINE_RETRY_WAIT_SECONDS=2
+
+FALA_AI_GEMINI_API_KEY=
+FALA_AI_GEMINI_MODEL=gemini-3-flash-preview
+
+SMTP_HOST=
+SMTP_PORT=587
+SMTP_USERNAME=
+SMTP_PASSWORD=
+SMTP_FROM=asmdigital@company.com
+SMTP_USE_TLS=true
+```
+
+Observações:
+
+- `APP_PUBLIC_URL` é usado em links enviados por email/notificação.
+- Se `SMTP_HOST` estiver vazio, o envio por email fica simulado/registrado.
+- Para Redmine interno, a máquina precisa estar conectada à VPN/rede corporativa.
+
+## 5. Autenticação e Usuários
+
+### 5.1. Login
+
+Endpoint:
+
+```http
+POST /api/auth/login
+```
+
+O frontend salva o token JWT e envia:
+
+```http
+Authorization: Bearer <token>
+```
+
+### 5.2. Gestão de usuários
+
+Menu:
+
+- **Configurações > Usuários**
+
+Funcionalidades:
+
+- Criar usuário.
+- Editar nome, email, perfil e status.
+- Resetar senha.
+- Ativar/inativar usuário.
+
+Endpoints:
+
+- `GET /api/users`
+- `POST /api/users`
+- `PUT /api/users/{id}`
+- `POST /api/users/{id}/reset-password`
+
+## 6. Conectores
+
+Menu:
+
+- **Conectores**
+
+### 6.1. Redmine
+
+Passos:
+
 1. Acesse **Conectores**.
 2. Clique em **Novo conector**.
-3. Preencha:
-   - `Base URL` (ex.: https://redmine.suaempresa.com)
-   - `API Key`
-4. Salve e clique em **Testar conexão**.
+3. Selecione tipo `Redmine`.
+4. Informe:
+   - Base URL: `https://redmine.intra.rs.gov.br`
+   - API Key
+   - Projetos padrão, quando aplicável
+5. Salve.
+6. Clique em **Testar conexão**.
 
-### Endpoints
+Endpoints:
+
 - `GET /api/connectors`
 - `POST /api/connectors`
 - `PUT /api/connectors/{id}`
 - `POST /api/connectors/{id}/test`
+- `GET /api/connectors/{id}/redmine/queries`
 
-## 9) Mapeamento e normalização
-Tipos de mapeamento:
-- `redmine_fields`: define onde ler Cliente/Sistema/Entrega (custom fields, tags, regex subject).
-- `normalization_dictionary`: regras de normalização (trim, uppercase, dedupe, dicionário de equivalências).
-- `regex_rules`: regex opcional para limpeza/tratamento de valores.
+### 6.2. Azure DevOps
+
+O sistema também possui suporte para dados de Azure DevOps. Consulte `docs/MCP_AZURE_DEVOPS.md` para detalhes do MCP e variáveis necessárias.
+
+## 7. Relatório Redmine
+
+Menu:
+
+- **Relatórios**
+
+Uso básico:
+
+1. Selecione o conector `Redmine`.
+2. Informe o projeto, por exemplo `asm-dem`.
+3. Informe data inicial e final.
+4. Se quiser, informe uma Query ID salva do Redmine.
+5. Clique em **Gerar relatório**.
+
+Campos de resultado:
+
+- Cliente
+- Sistema
+- Entrega
+- Referência
+- URL
+- Campos dinâmicos conforme o prompt/consulta
+
+Exportações:
+
+- **Exportar CSV**
+- **Exportar PDF**
 
 Endpoints:
-- `GET /api/mappings?type=...`
-- `PUT /api/mappings?type=...`
 
-## 10) Relatório Redmine
-### Tela (UI)
-1. Informe conector, IDs de projeto, período e status (opcional).
-2. Clique em **Gerar relatório**.
-
-### Campos normalizados
-- Cliente | Sistema | Entrega | source_ref | source_url
-
-### Endpoints
 - `POST /api/reports/redmine-deliveries/generate`
 - `GET /api/reports`
 - `GET /api/reports/{id}`
 - `GET /api/reports/{id}/export.csv`
 - `GET /api/reports/{id}/export.pdf`
 
-### Parâmetros relevantes
-- `status_id`: `open`, `closed` ou vazio (todos).
+Observações importantes:
 
-## 11) Exportações
-- CSV: baixa o arquivo com todas as linhas normalizadas.
-- PDF: gera PDF com cabeçalho e tabela de resultados.
+- Consulta salva do Redmine pode ser usada por `query_id`.
+- Se a consulta salva não retornar dados úteis para o prompt, o sistema pode usar filtros diretos no Redmine.
+- Para consultar Redmine interno, a VPN precisa estar ativa.
 
-## 12) Auditoria e execuções
-Cada execução registra:
-- `duration_ms`
-- `records`
-- `errors`
-Os dados ficam no `params_json` do report.
+## 8. Relatórios por Linguagem Natural
 
-## 13) Automações (mock executável)
-Automations configuradas (mock):
-- Relatório trimestral Redmine
-- FADPRO/IHPE
-- Azure épicos vencidos
-- Apropriação de horas
-- Email do ponto → gerar mensagem de prazo de abono
+Menu:
+
+- **Relatórios IA**
+
+Esse módulo permite criar prompts reutilizáveis para gerar relatórios sob demanda ou agendados.
+
+### 8.1. Criar template
+
+1. Acesse **Relatórios IA**.
+2. Clique em **Novo**.
+3. Informe:
+   - Nome
+   - Conector
+   - Brief para IA
+   - Prompt final
+   - Projeto padrão
+   - Query padrão, opcional
+   - Status e período padrão
+4. Clique em **Salvar template**.
+
+### 8.2. Gerar prompt Markdown
+
+O botão **Gerar prompt Markdown** monta um prompt inicial baseado no brief. O prompt pode ser editado antes de salvar/executar.
+
+### 8.3. Executar sob demanda
+
+Clique em **Executar agora**. O sistema:
+
+1. Interpreta o prompt.
+2. Define filtros de projeto/status/período/query.
+3. Executa o relatório.
+4. Abre diretamente a tela de resultado.
+
+Na tela de resultado, é possível:
+
+- Ver resumo.
+- Ver tabela de dados.
+- Exportar CSV/PDF.
+- Alterar o prompt.
+- Executar novamente.
+
+### 8.4. Agendamento simples
+
+O agendamento foi simplificado. Em vez de editar CRON diretamente, a tela permite:
+
+- Habilitar agendamento.
+- Escolher hora.
+- Escolher dias da semana.
+
+Exemplo:
+
+- Todos os dias às 08:00.
+- Segunda-feira às 08:00.
+- Segunda, quarta e sexta às 17:00.
+
+O sistema converte isso internamente para CRON.
+
+## 9. Gestão de Rotinas
+
+Menu:
+
+- **Rotinas**
+
+Essa tela mostra:
+
+- Relatórios agendados por linguagem natural.
+- Rotinas cadastradas.
+- Últimas execuções.
+
+### 9.1. Relatórios agendados por linguagem natural
+
+Os templates de relatórios IA com agendamento aparecem no topo da tela.
+
+Ações disponíveis:
+
+- **Executar**: roda o relatório imediatamente.
+- **Execuções**: mostra execuções anteriores.
+- **Abrir**: abre o último relatório gerado.
+
+### 9.2. Rotinas cadastradas
+
+Uma rotina pode ter uma ou mais tarefas. Tipos suportados:
+
+- Relatório Redmine.
+- Prompt Report.
+- Azure DevOps Quadro.
+- Webhook.
+- Sleep.
+- Custom.
+
+Cada rotina permite:
+
+- Nome.
+- Agendamento CRON.
+- Ativar/pausar.
+- Executar manualmente.
+- Editar tarefas.
+- Excluir.
+- Email para aviso de execução.
+
+### 9.3. Últimas execuções
+
+A tabela **Últimas execuções** junta:
+
+- Execuções de rotinas cadastradas.
+- Execuções de relatórios por linguagem natural.
+
+Quando a execução gera relatório, a tabela mostra o link **Abrir relatório**.
 
 Endpoints:
+
 - `GET /api/automations`
+- `POST /api/automations`
+- `PUT /api/automations/{id}`
+- `DELETE /api/automations/{id}`
 - `POST /api/automations/{id}/run`
 - `GET /api/automations/runs`
 
-## 14) Notificações (Teams)
-- Se `NOTIFICATIONS_SIMULATION=true`, apenas registra sem enviar.
-- Se `false`, envia para `TEAMS_WEBHOOK_URL`.
+## 10. Funcionários
 
-## 15) Gestão de usuários (CRUD)
-Rotas (admin):
+Menu:
+
+- **Funcionários**
+
+O cadastro de funcionários é reutilizável por:
+
+- Notificações inteligentes.
+- Avaliação para promoção.
+- Outros módulos futuros.
+
+Campos principais:
+
+- Nome
+- Email
+- Matrícula
+- Teams user ID
+- Cargo
+- Setor
+- Gestor
+- Ativo
+- Recebe notificação
+- Participa avaliação
+- Canal preferencial: email, Teams ou interna
+
+Uso:
+
+1. Acesse **Funcionários**.
+2. Clique em **Novo**.
+3. Preencha os dados.
+4. Defina o gestor, se houver.
+5. Defina canal preferencial.
+6. Salve.
+
+Endpoints:
+
+- `GET /api/employees`
+- `POST /api/employees`
+- `GET /api/employees/{id}`
+- `PUT /api/employees/{id}`
+
+## 11. Notificações Inteligentes
+
+Menu:
+
+- **Notificações**
+
+Esse módulo permite que uma rotina gere mensagens automáticas para responsáveis, gestores ou destinatários definidos.
+
+### 11.1. Conceitos
+
+Template de mensagem:
+
+- Define assunto e corpo.
+- Pode usar variáveis do resultado da rotina.
+
+Regra de notificação:
+
+- Define para qual rotina a notificação vale.
+- Define se está ativa.
+- Define destinatário.
+- Define canal preferencial e fallback.
+- Define se exige aprovação.
+- Define se gestor deve ser notificado.
+
+Histórico:
+
+- Registra todas as notificações.
+- Registra erros.
+- Registra tentativas.
+- Permite reenvio manual.
+
+### 11.2. Canais suportados
+
+- `email`
+- `teams`
+- `internal`
+
+Email:
+
+- Usa SMTP se configurado.
+- Se SMTP não estiver configurado, registra/simula envio.
+
+Teams:
+
+- Implementação desacoplada e preparada para Microsoft Graph.
+- Nesta fase, o envio é registrado/simulado.
+
+Interna:
+
+- Registra a notificação no histórico interno.
+
+### 11.3. Criar template
+
+1. Acesse **Notificações**.
+2. Na seção **Template de mensagem**, informe:
+   - Nome
+   - Canal
+   - Assunto
+   - Corpo
+3. Use variáveis entre `{{ }}`.
+4. Clique em **Salvar template**.
+
+Exemplo de template:
+
+```text
+Olá, {{nome_responsavel}}.
+
+A rotina "{{nome_rotina}}" identificou uma pendência relacionada ao projeto "{{nome_projeto}}".
+
+Status: {{status}}
+Dias em atraso: {{dias_atraso}}
+Data da execução: {{data_execucao}}
+
+Ação sugerida:
+{{acao_sugerida}}
+
+Acesse o relatório completo em:
+{{link_relatorio}}
+```
+
+### 11.4. Criar regra
+
+1. Acesse **Notificações**.
+2. Escolha a rotina.
+3. Escolha o template.
+4. Defina destinatário:
+   - Responsável do resultado.
+   - Gestor do responsável.
+   - Funcionário fixo.
+5. Escolha canal preferencial.
+6. Escolha canal fallback.
+7. Opcionalmente marque:
+   - Exige aprovação.
+   - Notificar gestor também.
+8. Salve.
+
+### 11.5. Variáveis disponíveis
+
+As variáveis vêm do resultado estruturado da rotina e de campos calculados:
+
+- `nome_responsavel`
+- `nome_rotina`
+- `nome_projeto`
+- `status`
+- `dias_atraso`
+- `data_execucao`
+- `acao_sugerida`
+- `link_relatorio`
+- `execucao_id`
+- `rotina_id`
+
+Também podem ser usadas chaves presentes no JSON original do resultado.
+
+### 11.6. Resultado estruturado esperado
+
+Exemplo:
+
+```json
+{
+  "rotina": "Projetos em atraso",
+  "data_execucao": "2026-05-07",
+  "deve_notificar": true,
+  "resultados": [
+    {
+      "projeto": "Portal de Serviços",
+      "status": "Atrasado",
+      "dias_atraso": 12,
+      "responsavel_nome": "Maria Silva",
+      "responsavel_id": 1,
+      "acao_sugerida": "Atualizar o cronograma e informar nova previsão de entrega."
+    }
+  ]
+}
+```
+
+Para identificar o responsável, o sistema procura, nesta ordem:
+
+1. `responsavel_id`, `employee_id`, `funcionario_id` ou `assigned_to_id`.
+2. `responsavel_email`, `email` ou `assigned_to_email`.
+3. `responsavel_nome`, `nome_responsavel`, `assigned_to` ou `responsavel`.
+
+### 11.7. Histórico e reenvio
+
+Na seção **Histórico de notificações** é possível:
+
+- Ver rotina.
+- Ver funcionário.
+- Ver canal.
+- Ver status.
+- Ver erro.
+- Reenviar notificações com status `erro`.
+
+Status possíveis:
+
+- `pendente`
+- `enviado`
+- `erro`
+- `cancelado`
+- `aguardando_aprovacao`
+
+Endpoints:
+
+- `GET /api/notification-templates`
+- `POST /api/notification-templates`
+- `PUT /api/notification-templates/{id}`
+- `DELETE /api/notification-templates/{id}`
+- `GET /api/notification-rules`
+- `POST /api/notification-rules`
+- `PUT /api/notification-rules/{id}`
+- `DELETE /api/notification-rules/{id}`
+- `GET /api/notifications`
+- `POST /api/notifications/{id}/retry`
+
+## 12. ChefIA / Fala AI
+
+Menu:
+
+- **ChefIA**
+
+Funções principais:
+
+- Check-in manual.
+- Lembretes.
+- Relatório diário.
+- Consulta ao bot.
+- Integração preparada com Teams.
+
+Mais detalhes:
+
+- `docs/FALA_AI.md`
+
+## 13. Avaliação
+
+Menu:
+
+- **Avaliação**
+
+Submódulos:
+
+- Ciclos
+- CSV e IA
+- Pontuação
+- Relatório IA
+- Calibração
+- Lista final
+
+O cadastro de funcionários é compartilhado com esse módulo. Use **Funcionários** para manter dados básicos atualizados.
+
+## 14. MCP Redmine
+
+O projeto inclui servidor MCP para Redmine.
+
+Subir:
+
+```bash
+docker compose up -d redmine-mcp
+```
+
+Validar:
+
+```bash
+curl http://localhost:9000/mcp
+```
+
+Configuração principal:
+
+```env
+REDMINE_URL=https://redmine.intra.rs.gov.br
+REDMINE_API_KEY=seu_token
+REDMINE_MCP_PORT=9000
+```
+
+Mais detalhes:
+
+- `docs/MCP_REDMINE.md`
+
+## 15. Publicação no Servidor de Teste
+
+Fluxo recomendado:
+
+1. Subir alterações para o GitHub.
+2. Entrar no servidor de teste.
+3. Atualizar repositório.
+4. Rebuildar backend/frontend.
+5. Subir containers.
+6. Validar logs e healthcheck.
+
+Comandos:
+
+```bash
+cd ~/asmdigital
+git pull origin main
+docker compose build backend frontend
+docker compose up -d db backend frontend redmine-mcp
+docker compose ps
+docker compose logs --tail 120 backend
+```
+
+Validar:
+
+```bash
+curl http://localhost:8000/health
+curl -I http://localhost:3000/login
+```
+
+Se acessado por outra máquina via Windows/WSL, conferir portproxy:
+
+```powershell
+netsh interface portproxy show all
+```
+
+Se necessário, recriar como administrador:
+
+```powershell
+netsh interface portproxy add v4tov4 listenaddress=0.0.0.0 listenport=3000 connectaddress=IP_DO_LINUX connectport=3000
+New-NetFirewallRule -DisplayName "ASMDIGITAL Frontend 3000" -Direction Inbound -Action Allow -Protocol TCP -LocalPort 3000
+```
+
+## 16. Troubleshooting
+
+### 16.1. Redmine não retorna dados
+
+Verificar:
+
+- VPN ligada.
+- URL do Redmine acessível no servidor.
+- API Key válida.
+- Projeto correto, por exemplo `asm-dem`.
+- Query ID correta.
+
+Teste:
+
+```bash
+docker compose logs --tail 120 backend
+```
+
+### 16.2. Docker não conecta ao daemon
+
+Erro comum:
+
+```text
+Cannot connect to the Docker daemon
+```
+
+No WSL/ambiente Linux:
+
+```bash
+service docker start
+docker info
+```
+
+### 16.3. Problemas de iptables no WSL
+
+Se Docker falhar por `iptables`/`nft`, usar legacy pode ser necessário:
+
+```bash
+update-alternatives --set iptables /usr/sbin/iptables-legacy
+update-alternatives --set ip6tables /usr/sbin/ip6tables-legacy
+service docker restart
+```
+
+### 16.4. Frontend não atualiza
+
+Rebuild:
+
+```bash
+docker compose build frontend
+docker compose up -d frontend
+```
+
+No navegador:
+
+```text
+Ctrl + F5
+```
+
+### 16.5. Migration falha
+
+Ver logs:
+
+```bash
+docker compose logs --tail 120 backend
+```
+
+Conferir versão do banco:
+
+```bash
+docker compose exec -T db psql -U postgres -d asmdigital -c "select version_num from alembic_version;"
+```
+
+### 16.6. Email não envia
+
+Verificar:
+
+- `SMTP_HOST`
+- `SMTP_PORT`
+- `SMTP_USERNAME`
+- `SMTP_PASSWORD`
+- `SMTP_FROM`
+- `SMTP_USE_TLS`
+
+Se SMTP estiver vazio, o sistema registra/simula envio.
+
+## 17. Endpoints Principais
+
+Autenticação:
+
+- `POST /api/auth/login`
+- `GET /api/auth/me`
+
+Usuários:
+
 - `GET /api/users`
 - `POST /api/users`
 - `PUT /api/users/{id}`
-- `DELETE /api/users/{id}`
 
-Campos principais:
-- `name`, `email`, `password`, `role`, `is_active`
+Funcionários:
 
-## 16) Troubleshooting
-Backend não sobe / Alembic erro:
-- Verifique BOM/encoding em `alembic.ini` e scripts (UTF-8 sem BOM).
+- `GET /api/employees`
+- `POST /api/employees`
+- `PUT /api/employees/{id}`
 
-Erro bcrypt:
-- Senha maior que 72 bytes causa falha. Use senhas menores.
+Conectores:
 
-Frontend não inicia:
-- Rebuild sem cache: `docker compose build --no-cache frontend`
+- `GET /api/connectors`
+- `POST /api/connectors`
+- `PUT /api/connectors/{id}`
+- `POST /api/connectors/{id}/test`
 
-Ver logs:
-```bash
-docker compose logs -f backend
-docker compose logs -f frontend
+Relatórios:
+
+- `POST /api/reports/redmine-deliveries/generate`
+- `GET /api/reports`
+- `GET /api/reports/{id}`
+- `GET /api/reports/{id}/export.csv`
+- `GET /api/reports/{id}/export.pdf`
+
+Relatórios IA:
+
+- `GET /api/prompt-reports`
+- `POST /api/prompt-reports`
+- `PUT /api/prompt-reports/{id}`
+- `POST /api/prompt-reports/{id}/run`
+- `GET /api/prompt-reports/{id}/runs`
+
+Rotinas:
+
+- `GET /api/automations`
+- `POST /api/automations`
+- `PUT /api/automations/{id}`
+- `DELETE /api/automations/{id}`
+- `POST /api/automations/{id}/run`
+- `GET /api/automations/runs`
+
+Notificações:
+
+- `GET /api/notification-templates`
+- `POST /api/notification-templates`
+- `GET /api/notification-rules`
+- `POST /api/notification-rules`
+- `GET /api/notifications`
+- `POST /api/notifications/{id}/retry`
+
+## 18. Arquitetura Resumida
+
+Backend:
+
+- Python
+- FastAPI
+- SQLAlchemy
+- Alembic
+- PostgreSQL
+- APScheduler
+
+Frontend:
+
+- React
+- Vite
+- Tailwind
+- Axios
+
+Infra:
+
+- Docker Compose
+- Nginx no frontend
+- PostgreSQL persistente em volume Docker
+
+Pastas principais:
+
+```text
+backend/app/api/routers
+backend/app/services
+backend/app/schemas
+backend/app/models
+backend/alembic/versions
+frontend/src/api
+frontend/src/pages
+frontend/src/components
+docs
 ```
+
+## 19. Boas Práticas de Operação
+
+- Manter `.env` fora do Git.
+- Usar `.env.example` apenas como referência.
+- Antes de publicar no teste, executar build local quando possível.
+- Conferir logs do backend após migrations.
+- Configurar `APP_PUBLIC_URL` corretamente no servidor.
+- Manter VPN ativa para integrações internas.
+- Para notificações reais por email, configurar SMTP antes de ativar regras em produção.

@@ -1,202 +1,81 @@
-# ASM Digital - Automação de Relatórios e Alertas (MVP)
+ï»¿# ASM Digital
 
-Monorepo com frontend React/Vite/Tailwind e backend FastAPI/SQLAlchemy/Alembic, utilizando PostgreSQL e Docker Compose.
+Sistema web para relatÃ³rios, automaÃ§Ãµes, rotinas agendadas, notificaÃ§Ãµes inteligentes e apoio Ã  gestÃ£o operacional.
 
-## Pré-requisitos
-- Docker + Docker Compose (Docker Desktop no Windows)
+## Stack
 
-## Como rodar
+- Backend: Python, FastAPI, SQLAlchemy, Alembic
+- Banco: PostgreSQL
+- Frontend: React, Vite, Tailwind
+- Infra: Docker Compose, Nginx
+
+## Como Rodar
+
 ```bash
-docker compose up --build
+docker compose up -d --build
 ```
 
-## URLs
+URLs padrÃ£o:
+
 - Frontend: http://localhost:3000
-- Backend (API): http://localhost:8000
+- Backend: http://localhost:8000
 - Swagger: http://localhost:8000/docs
 
-## Credenciais admin (seed automático)
-As credenciais são criadas automaticamente no primeiro boot, com base no `.env`.
+Credenciais iniciais, configuradas no `.env`:
 
-```
+```env
 ADMIN_EMAIL=admin@company.com
 ADMIN_PASSWORD=admin123
 ```
 
-## Documentação técnica de uso (completa)
+## MÃ³dulos Principais
 
-### 1) Visão geral
-Este MVP permite:
-- configurar conectores (Redmine) em modo leitura;
-- normalizar campos (Cliente/Sistema/Entrega) via mapeamento;
-- gerar relatórios consolidados com filtros e exportação CSV/PDF;
-- executar automações (mock) e registrar auditoria.
+- Conectores Redmine e Azure DevOps
+- RelatÃ³rios Redmine com CSV/PDF
+- RelatÃ³rios por linguagem natural
+- Rotinas manuais e agendadas
+- Cadastro de funcionÃ¡rios
+- NotificaÃ§Ãµes inteligentes por email, Teams ou interna
+- HistÃ³rico de execuÃ§Ãµes e notificaÃ§Ãµes
+- ChefIA/Fala AI
+- AvaliaÃ§Ã£o e promoÃ§Ã£o
+- MCP Redmine e Azure DevOps
 
-### 2) Infraestrutura e containers
-Serviços no `docker-compose.yml`:
-- `db`: PostgreSQL 15 com volume persistente e healthcheck `pg_isready`.
-- `backend`: FastAPI/Uvicorn. Executa Alembic e seed no startup.
-- `frontend`: Vite build + Nginx servindo a SPA. Proxy `/api` para o backend.
+## DocumentaÃ§Ã£o de Uso
 
-Healthchecks:
-- DB garante readiness antes do backend subir.
-- Backend espera DB (via `depends_on` com condition).
+O guia completo de operaÃ§Ã£o estÃ¡ em:
 
-### 3) Variáveis de ambiente
-Arquivo `.env.example` (copiar para `.env`):
-- `POSTGRES_DB`, `POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_PORT`
-- `DATABASE_URL` (SQLAlchemy)
-- `JWT_SECRET`, `JWT_EXPIRE_MINUTES`
-- `ADMIN_EMAIL`, `ADMIN_PASSWORD`
-- `REDMINE_DEFAULT_TIMEOUT`, `REDMINE_RETRY_ATTEMPTS`, `REDMINE_RETRY_WAIT_SECONDS`
-- `TEAMS_WEBHOOK_URL` (opcional)
-- `NOTIFICATIONS_SIMULATION` (true/false)
+- [docs/USAGE.md](docs/USAGE.md)
 
-### 4) Autenticação
-- Login via JWT:
-  - `POST /api/auth/login` ? retorna `access_token`.
-  - `GET /api/auth/me` ? retorna dados do usuário logado.
-- O frontend salva o token e envia no header:
-  - `Authorization: Bearer <token>`
+Documentos complementares:
 
-### 5) Conector Redmine
-Cadastro
-1. Acesse **Conectores**.
-2. Clique em **Novo conector**.
-3. Preencha:
-   - `Base URL` (ex.: https://redmine.suaempresa.com)
-   - `API Key`
-4. Salve e clique em **Testar conexão**.
+- [docs/MCP_REDMINE.md](docs/MCP_REDMINE.md)
+- [docs/MCP_AZURE_DEVOPS.md](docs/MCP_AZURE_DEVOPS.md)
+- [docs/FALA_AI.md](docs/FALA_AI.md)
 
-Endpoints
-- `GET /api/connectors`
-- `POST /api/connectors`
-- `PUT /api/connectors/{id}`
-- `POST /api/connectors/{id}/test`
+## Atualizar Servidor de Teste
 
-### 6) Mapeamento e normalização
-Tipos de mapeamento:
-- `redmine_fields`: define onde ler Cliente/Sistema/Entrega (custom fields, tags, regex subject).
-- `normalization_dictionary`: regras de normalização (trim, uppercase, dedupe, dicionário de equivalências).
-- `regex_rules`: regex opcional para limpeza/tratamento de valores.
-
-Endpoints
-- `GET /api/mappings?type=...`
-- `PUT /api/mappings?type=...`
-
-### 7) Relatório Redmine (geração e filtros)
-Tela
-- Informe conector, IDs de projeto, período e status (opcional).
-- Clique em **Gerar relatório**.
-
-Campos normalizados
-- Cliente | Sistema | Entrega | source_ref | source_url
-
-Endpoints
-- `POST /api/reports/redmine-deliveries/generate`
-- `GET /api/reports`
-- `GET /api/reports/{id}`
-- `GET /api/reports/{id}/export.csv`
-- `GET /api/reports/{id}/export.pdf`
-
-Parâmetros relevantes
-- `status_id`: `open`, `closed` ou vazio (todos).
-
-### 8) Exportações
-CSV
-- Baixa o arquivo com todas as linhas normalizadas.
-
-PDF
-- Gera PDF com cabeçalho e tabela de resultados.
-
-### 9) Auditoria e execuções
-Cada execução registra:
-- `duration_ms`
-- `records`
-- `errors`
-Os dados ficam no `params_json` do report.
-
-### 10) Automações (mock executável)
-Automations configuradas (mock):
-- Relatório trimestral Redmine
-- FADPRO/IHPE
-- Azure épicos vencidos
-- Apropriação de horas
-- Email do ponto ? gerar mensagem de prazo de abono
-
-Endpoints
-- `GET /api/automations`
-- `POST /api/automations/{id}/run`
-- `GET /api/automations/runs` (histórico)
-
-### 11) Notificações (Teams)
-Webhook simples:
-- Se `NOTIFICATIONS_SIMULATION=true`, apenas registra sem enviar.
-- Se `false`, envia para `TEAMS_WEBHOOK_URL`.
-
-### 12) Gestão de usuários (CRUD)
-Rotas (admin):
-- `GET /api/users`
-- `POST /api/users`
-- `PUT /api/users/{id}`
-- `DELETE /api/users/{id}`
-
-Campos principais:
-- `name`, `email`, `password`, `role`, `is_active`
-
-### 13) Troubleshooting comum
-Backend não sobe / Alembic erro
-- Verifique BOM/encoding em `alembic.ini` e scripts (UTF-8 sem BOM).
-
-Erro bcrypt
-- Senha maior que 72 bytes causa falha. Use senhas menores.
-
-Frontend não inicia
-- Rebuild sem cache: `docker compose build --no-cache frontend`
-
-Ver logs
 ```bash
-docker compose logs -f backend
-docker compose logs -f frontend
+cd ~/asmdigital
+git pull origin main
+docker compose build backend frontend
+docker compose up -d db backend frontend redmine-mcp
+docker compose ps
 ```
 
-## Configurar conector Redmine
-1. Acesse **Conectores**
-2. Clique em **Novo conector**
-3. Preencha:
-   - `Base URL` (ex: https://redmine.suaempresa.com)
-   - `API Key`
-4. Salve e clique em **Testar conexão**
+Validar:
 
-## Gerar relatório Redmine
-1. Acesse **Relatório Redmine**
-2. Selecione o conector
-3. Informe os IDs dos projetos (separados por vírgula)
-4. Defina o período (início/fim)
-5. Clique em **Gerar relatório**
-6. Use **Exportar CSV** para baixar o arquivo
-7. Use **Exportar PDF** para baixar o arquivo
-
-## Estrutura do repositório
-```
-/
-  docker-compose.yml
-  .env.example
-  /backend
-  /frontend
+```bash
+curl http://localhost:8000/health
+curl -I http://localhost:3000/login
 ```
 
-## Notas técnicas
-- O backend aplica as migrações automaticamente (Alembic) e cria o usuário admin no startup.
-- O frontend é buildado com Vite e servido via Nginx, com proxy `/api` para o backend.
-- Endpoints principais:
-  - POST /api/auth/login
-  - GET  /api/auth/me
-  - GET/POST/PUT /api/connectors
-  - POST /api/connectors/{id}/test
-  - POST /api/reports/redmine-deliveries/generate
-  - GET  /api/reports/{id}/export.csv
-  - GET  /api/reports/{id}/export.pdf
-  - GET  /api/automations
-  - POST /api/automations/{id}/run
+## Estrutura
+
+```text
+backend/    API, serviÃ§os, modelos e migrations
+frontend/   SPA React
+docs/       DocumentaÃ§Ã£o tÃ©cnica e de uso
+mcp/        IntegraÃ§Ãµes MCP
+docker-compose.yml
 ```
