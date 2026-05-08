@@ -359,7 +359,6 @@ const ReportsRedminePage: React.FC = () => {
         { key: 'responsavel', label: 'Atribuido para' },
         { key: 'data_prevista', label: 'Data prevista' },
         { key: 'alterado_em', label: 'Alterado em' },
-        { key: 'dias_atraso', label: 'Dias atraso' },
         { key: 'status_redmine', label: 'Status' },
       ])
     : [

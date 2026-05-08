@@ -83,7 +83,6 @@ def _should_use_saved_query(prompt: str) -> bool:
 
 def _prompt_columns(prompt: str) -> list[dict[str, str]]:
     lowered = prompt.lower()
-    columns: list[dict[str, str]] = [{"key": "source_ref", "label": "ID"}]
     candidates = [
         ("subject", "Titulo", ("titulo", "título", "assunto", "demanda")),
         ("assigned_to", "Atribuido para", ("atribuido", "atribuído", "responsavel", "responsável")),
@@ -96,9 +95,30 @@ def _prompt_columns(prompt: str) -> list[dict[str, str]]:
         ("author", "Autor", ("autor", "solicitante")),
         ("done_ratio", "% concluido", ("concluido", "concluído", "percentual", "%")),
     ]
+    matched_columns: list[dict[str, str]] = []
     for key, label, terms in candidates:
         if any(term in lowered for term in terms):
-            columns.append({"key": key, "label": label})
+            matched_columns.append({"key": key, "label": label})
+
+    concrete_fields = [item for item in matched_columns if item["key"] != "subject"]
+    has_explicit_column_request = any(
+        term in lowered
+        for term in (
+            "campos",
+            "coluna",
+            "colunas",
+            "deve ter",
+            "deverá ter",
+            "devera ter",
+            "adicionar",
+            "acrescentar",
+        )
+    )
+    if not has_explicit_column_request and not concrete_fields:
+        return []
+
+    columns: list[dict[str, str]] = [{"key": "source_ref", "label": "ID"}]
+    columns.extend(matched_columns)
     if not any(item["key"] == "subject" for item in columns):
         columns.append({"key": "subject", "label": "Titulo"})
     return columns
