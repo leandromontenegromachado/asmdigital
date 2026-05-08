@@ -170,6 +170,44 @@ class ManagementEvent(Base):
 
     responsible = relationship("Employee")
     creator = relationship("User")
+    rule_actions = relationship("ManagementEventAction", back_populates="management_event")
+
+
+class ManagementEventRule(Base):
+    __tablename__ = "management_event_rules"
+
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String(200), nullable=False)
+    description = Column(Text, nullable=True)
+    is_active = Column(Boolean, nullable=False, default=True, index=True)
+    condition_json = Column(JSONB, nullable=False, default=dict)
+    action_json = Column(JSONB, nullable=False, default=dict)
+    priority = Column(Integer, nullable=False, default=100, index=True)
+    created_by = Column(Integer, ForeignKey("users.id"), nullable=True, index=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
+
+    creator = relationship("User")
+    actions = relationship("ManagementEventAction", back_populates="rule")
+
+
+class ManagementEventAction(Base):
+    __tablename__ = "management_event_actions"
+
+    id = Column(Integer, primary_key=True, index=True)
+    rule_id = Column(Integer, ForeignKey("management_event_rules.id"), nullable=False, index=True)
+    management_event_id = Column(Integer, ForeignKey("management_events.id"), nullable=False, index=True)
+    pending_item_id = Column(Integer, ForeignKey("pending_items.id"), nullable=True, index=True)
+    action_type = Column(String(80), nullable=False, index=True)
+    status = Column(String(40), nullable=False, default="executed", index=True)
+    message = Column(Text, nullable=True)
+    action_json = Column(JSONB, nullable=False, default=dict)
+    result_json = Column(JSONB, nullable=False, default=dict)
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+    rule = relationship("ManagementEventRule", back_populates="actions")
+    management_event = relationship("ManagementEvent", back_populates="rule_actions")
+    pending_item = relationship("PendingItem")
 
 
 class PendingItem(Base):

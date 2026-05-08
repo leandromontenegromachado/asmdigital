@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_user
@@ -11,7 +11,14 @@ from app.schemas.management_events import (
     ManagementEventSummary,
     ManagementEventUpdate,
 )
+from app.schemas.management_event_rules import (
+    ManagementEventRuleApplyResult,
+    ManagementEventRuleCreate,
+    ManagementEventRuleOut,
+    ManagementEventRuleUpdate,
+)
 from app.schemas.pending_items import PendingItemOut
+from app.services.management_event_rule_engine import ManagementEventRuleEngine, ManagementEventRuleService
 from app.services.management_event_service import ManagementEventService, management_event_to_out
 from app.services.pending_item_service import PendingItemService, pending_item_to_out
 
@@ -53,6 +60,65 @@ def management_events_summary(
     _user: User = Depends(get_current_user),
 ):
     return ManagementEventService(db).dashboard_summary()
+
+
+@router.get("/rules", response_model=list[ManagementEventRuleOut])
+def list_management_event_rules(
+    active: bool | None = Query(default=None),
+    limit: int = Query(default=100, ge=1, le=500),
+    db: Session = Depends(get_db),
+    _user: User = Depends(get_current_user),
+):
+    return ManagementEventRuleService(db).list_rules(active=active, limit=limit)
+
+
+@router.post("/rules", response_model=ManagementEventRuleOut, status_code=status.HTTP_201_CREATED)
+def create_management_event_rule(
+    payload: ManagementEventRuleCreate,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    return ManagementEventRuleService(db).create_rule(payload, user)
+
+
+@router.get("/rules/{rule_id}", response_model=ManagementEventRuleOut)
+def get_management_event_rule(
+    rule_id: int,
+    db: Session = Depends(get_db),
+    _user: User = Depends(get_current_user),
+):
+    rule = ManagementEventRuleService(db).get_rule(rule_id)
+    if not rule:
+        raise HTTPException(status_code=404, detail="Management event rule not found")
+    return rule
+
+
+@router.put("/rules/{rule_id}", response_model=ManagementEventRuleOut)
+def update_management_event_rule(
+    rule_id: int,
+    payload: ManagementEventRuleUpdate,
+    db: Session = Depends(get_db),
+    _user: User = Depends(get_current_user),
+):
+    service = ManagementEventRuleService(db)
+    rule = service.get_rule(rule_id)
+    if not rule:
+        raise HTTPException(status_code=404, detail="Management event rule not found")
+    return service.update_rule(rule, payload)
+
+
+@router.delete("/rules/{rule_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_management_event_rule(
+    rule_id: int,
+    db: Session = Depends(get_db),
+    _user: User = Depends(get_current_user),
+):
+    service = ManagementEventRuleService(db)
+    rule = service.get_rule(rule_id)
+    if not rule:
+        raise HTTPException(status_code=404, detail="Management event rule not found")
+    service.delete_rule(rule)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @router.get("/{event_id}", response_model=ManagementEventOut)
@@ -121,3 +187,15 @@ def convert_management_event_to_pending(
         raise HTTPException(status_code=404, detail="Management event not found")
     item = PendingItemService(db).create_from_management_event(event, user)
     return pending_item_to_out(item)
+
+
+@router.post("/{event_id}/apply-rules", response_model=ManagementEventRuleApplyResult)
+def apply_management_event_rules(
+    event_id: int,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    event = ManagementEventService(db).get_event(event_id)
+    if not event:
+        raise HTTPException(status_code=404, detail="Management event not found")
+    return ManagementEventRuleEngine(db).apply_rules(event, user)
