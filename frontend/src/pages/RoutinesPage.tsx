@@ -777,7 +777,7 @@ const RoutinesPage: React.FC = () => {
             <h1 className="text-3xl font-extrabold tracking-tight text-gray-900">Gestão de Rotinas</h1>
             <p className="mt-1 text-gray-500">Gerencie agendamento, estado e execuções das automações do sistema.</p>
           </div>
-          <div className="flex gap-2">
+          <div className="flex flex-wrap gap-2">
             <button onClick={handleOpenCreate} className="inline-flex items-center justify-center rounded-lg bg-cyan-600 px-4 py-2.5 text-sm font-medium text-white hover:bg-cyan-700"><Plus className="mr-2 h-4 w-4" />Nova rotina</button>
             <button onClick={handleRefresh} disabled={refreshing} className="inline-flex items-center justify-center rounded-lg border border-gray-300 bg-white px-4 py-2.5 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-60"><RefreshCw className={`mr-2 h-4 w-4 ${refreshing ? 'animate-spin' : ''}`} />{refreshing ? 'Atualizando...' : 'Atualizar'}</button>
           </div>
@@ -791,7 +791,7 @@ const RoutinesPage: React.FC = () => {
             <div className="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-3"><Search className="h-5 w-5 text-gray-400" /></div>
             <input type="text" className="block w-full rounded-lg border border-gray-300 bg-white py-2.5 pl-10 pr-3 text-sm leading-5 placeholder-gray-400 shadow-sm focus:border-cyan-500 focus:outline-none focus:ring-1 focus:ring-cyan-500" placeholder="Buscar por nome ou chave..." value={search} onChange={(e) => setSearch(e.target.value)} />
           </div>
-          <div className="flex w-full items-center gap-3 sm:w-auto">
+          <div className="flex w-full flex-wrap items-center gap-3 sm:w-auto">
             <select className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2.5 text-sm text-gray-700 shadow-sm focus:border-cyan-500 focus:outline-none focus:ring-1 focus:ring-cyan-500 sm:w-48" value={statusFilter} onChange={(e) => setStatusFilter(e.target.value as StatusFilter)}>
               <option value="all">Todos os status</option>
               <option value="enabled">Ativas</option>
@@ -817,35 +817,35 @@ const RoutinesPage: React.FC = () => {
                   </div>
                   <span className="rounded-full bg-cyan-50 px-3 py-1 text-xs font-semibold text-cyan-700">{scheduledPromptTemplates.length} agendado(s)</span>
                 </div>
-                <div className={viewMode === 'grid' ? 'grid grid-cols-1 gap-6 md:grid-cols-2 lg:grid-cols-3' : 'flex flex-col gap-4'}>
+                <div className={viewMode === 'grid' ? 'grid grid-cols-1 gap-6 lg:grid-cols-2 2xl:grid-cols-3' : 'flex flex-col gap-4'}>
                   {scheduledPromptTemplates.map((template) => {
                     const templateRuns = promptTemplateRuns[template.id] || [];
                     const lastRun = templateRuns[0];
                     const runKey = -template.id;
                     return (
-                      <article key={`prompt-template-${template.id}`} className="flex h-full flex-col overflow-hidden rounded-xl border border-cyan-100 bg-white shadow-sm">
-                        <div className="flex items-start justify-between p-5">
-                          <div>
-                            <p className="text-xs font-semibold uppercase tracking-wide text-cyan-600">prompt-report-{template.id}</p>
-                            <h3 className="mt-1 text-lg font-bold text-gray-900">{template.name}</h3>
+                      <article key={`prompt-template-${template.id}`} className="flex h-full min-w-0 flex-col overflow-hidden rounded-xl border border-cyan-100 bg-white shadow-sm">
+                        <div className="flex items-start justify-between gap-3 p-5">
+                          <div className="min-w-0 flex-1">
+                            <p className="break-all text-xs font-semibold uppercase tracking-wide text-cyan-600">prompt-report-{template.id}</p>
+                            <h3 className="mt-1 break-words text-xl font-bold leading-snug text-gray-900">{template.name}</h3>
                             <div className="mt-2 flex flex-wrap gap-2">
                               <span className={`inline-flex rounded-full px-2.5 py-0.5 text-xs font-semibold ${templateStatusBadge(template)}`}>{templateStatusLabel(template)}</span>
                               <span className="inline-flex rounded-full bg-cyan-50 px-2.5 py-0.5 text-xs font-semibold text-cyan-700">Relatório agendado</span>
                             </div>
                           </div>
-                          <a href="/reports/prompt-templates" className="rounded-lg border border-gray-200 p-2 text-gray-500 hover:bg-gray-50 hover:text-gray-700" title="Editar no relatório por linguagem natural"><Settings2 className="h-4 w-4" /></a>
+                          <a href="/reports/prompt-templates" className="shrink-0 rounded-lg border border-gray-200 p-2 text-gray-500 hover:bg-gray-50 hover:text-gray-700" title="Editar no relatório por linguagem natural"><Settings2 className="h-4 w-4" /></a>
                         </div>
                         <div className="flex-grow border-y border-cyan-50 bg-cyan-50/40 px-5 py-3 text-sm">
-                          <div className="flex items-center justify-between py-1"><span className="text-gray-500">Última execução</span><span className="font-medium text-gray-700">{lastRun ? formatDate(lastRun.generated_at) : formatDate(template.last_run_at)}</span></div>
-                          <div className="flex items-center justify-between py-1"><span className="text-gray-500">Próxima execução</span><span className="font-medium text-gray-700">{formatDate(template.next_run_at)}</span></div>
-                          <div className="flex items-center justify-between py-1"><span className="text-gray-500">Agendamento</span><code className="rounded bg-white px-2 py-0.5 text-xs text-gray-700">{template.schedule_cron || 'manual'}</code></div>
-                          <div className="flex items-center justify-between py-1"><span className="text-gray-500">Execuções</span><span className="font-medium text-gray-700">{templateRuns.length}</span></div>
+                          <div className="grid grid-cols-[minmax(0,1fr)_minmax(0,auto)] gap-x-3 py-1"><span className="min-w-0 text-gray-500">Última execução</span><span className="min-w-0 break-words text-right font-medium text-gray-700">{lastRun ? formatDate(lastRun.generated_at) : formatDate(template.last_run_at)}</span></div>
+                          <div className="grid grid-cols-[minmax(0,1fr)_minmax(0,auto)] gap-x-3 py-1"><span className="min-w-0 text-gray-500">Próxima execução</span><span className="min-w-0 break-words text-right font-medium text-gray-700">{formatDate(template.next_run_at)}</span></div>
+                          <div className="grid grid-cols-[minmax(0,1fr)_minmax(0,auto)] gap-x-3 py-1"><span className="min-w-0 text-gray-500">Agendamento</span><code className="min-w-0 break-all rounded bg-white px-2 py-0.5 text-right text-xs text-gray-700">{template.schedule_cron || 'manual'}</code></div>
+                          <div className="grid grid-cols-[minmax(0,1fr)_minmax(0,auto)] gap-x-3 py-1"><span className="min-w-0 text-gray-500">Execuções</span><span className="min-w-0 text-right font-medium text-gray-700">{templateRuns.length}</span></div>
                         </div>
-                        <div className="mt-auto flex gap-2 p-5">
-                          <button onClick={() => handleRunPromptTemplateNow(template)} disabled={runningId === runKey} className="flex flex-1 items-center justify-center gap-2 rounded-lg bg-cyan-500 px-4 py-2 text-sm font-semibold text-white hover:bg-cyan-600 disabled:opacity-60"><Play className="h-4 w-4" />{runningId === runKey ? 'Executando...' : 'Executar'}</button>
-                          <button onClick={() => handleViewPromptTemplateRuns(template)} className="rounded-lg border border-gray-300 px-3 py-2 text-xs font-semibold text-gray-700 hover:bg-gray-50">Execuções</button>
+                        <div className="mt-auto flex flex-wrap gap-2 p-5">
+                          <button onClick={() => handleRunPromptTemplateNow(template)} disabled={runningId === runKey} className="flex min-w-[140px] flex-[1_1_140px] items-center justify-center gap-2 rounded-lg bg-cyan-500 px-4 py-2 text-sm font-semibold text-white hover:bg-cyan-600 disabled:opacity-60"><Play className="h-4 w-4 shrink-0" />{runningId === runKey ? 'Executando...' : 'Executar'}</button>
+                          <button onClick={() => handleViewPromptTemplateRuns(template)} className="min-w-[104px] flex-1 rounded-lg border border-gray-300 px-3 py-2 text-xs font-semibold text-gray-700 hover:bg-gray-50">Execuções</button>
                           {lastRun ? (
-                            <a href={`/reports/redmine-deliveries?report_id=${lastRun.id}`} className="rounded-lg border border-gray-300 px-3 py-2 text-xs font-semibold text-gray-700 hover:bg-gray-50">Abrir</a>
+                            <a href={`/reports/redmine-deliveries?report_id=${lastRun.id}`} className="min-w-[76px] flex-1 rounded-lg border border-gray-300 px-3 py-2 text-center text-xs font-semibold text-gray-700 hover:bg-gray-50">Abrir</a>
                           ) : null}
                         </div>
                       </article>
@@ -860,30 +860,30 @@ const RoutinesPage: React.FC = () => {
                 <h2 className="text-lg font-bold text-gray-900">Rotinas cadastradas</h2>
                 <p className="text-sm text-gray-500">Automações criadas na gestão de rotinas.</p>
               </div>
-              <div className={viewMode === 'grid' ? 'grid grid-cols-1 gap-6 md:grid-cols-2 lg:grid-cols-3' : 'flex flex-col gap-4'}>
+              <div className={viewMode === 'grid' ? 'grid grid-cols-1 gap-6 lg:grid-cols-2 2xl:grid-cols-3' : 'flex flex-col gap-4'}>
                 {filteredAutomations.map((automation) => (
-                  <article key={automation.id} className="flex h-full flex-col overflow-hidden rounded-xl border border-gray-200 bg-white shadow-sm">
-                    <div className="flex items-start justify-between p-5">
-                      <div>
-                        <p className="text-xs font-semibold uppercase tracking-wide text-gray-400">{automation.key}</p>
-                        <h3 className="mt-1 text-lg font-bold text-gray-900">{automation.name}</h3>
+                  <article key={automation.id} className="flex h-full min-w-0 flex-col overflow-hidden rounded-xl border border-gray-200 bg-white shadow-sm">
+                    <div className="flex items-start justify-between gap-3 p-5">
+                      <div className="min-w-0 flex-1">
+                        <p className="break-all text-xs font-semibold uppercase tracking-wide text-gray-400">{automation.key}</p>
+                        <h3 className="mt-1 break-words text-xl font-bold leading-snug text-gray-900">{automation.name}</h3>
                         <span className={`mt-2 inline-flex rounded-full px-2.5 py-0.5 text-xs font-semibold ${statusBadge(automation)}`}>{statusLabel(automation)}</span>
                       </div>
-                      <div className="flex gap-1">
+                      <div className="flex shrink-0 gap-1">
                         <button onClick={() => openEditModal(automation)} className="rounded-lg border border-gray-200 p-2 text-gray-500 hover:bg-gray-50 hover:text-gray-700" title="Editar rotina"><Settings2 className="h-4 w-4" /></button>
                         <button onClick={() => handleDeleteRoutine(automation)} className="rounded-lg border border-red-200 p-2 text-red-600 hover:bg-red-50" title="Excluir rotina"><Trash2 className="h-4 w-4" /></button>
                       </div>
                     </div>
                     <div className="flex-grow border-y border-gray-100 bg-gray-50 px-5 py-3 text-sm">
-                      <div className="flex items-center justify-between py-1"><span className="text-gray-500">Última execução</span><span className="font-medium text-gray-700">{formatDate(automation.last_run_at)}</span></div>
-                      <div className="flex items-center justify-between py-1"><span className="text-gray-500">Próxima execução</span><span className="font-medium text-gray-700">{formatDate(automation.next_run_at)}</span></div>
-                      <div className="flex items-center justify-between py-1"><span className="text-gray-500">CRON</span><code className="rounded bg-gray-100 px-2 py-0.5 text-xs text-gray-700">{automation.schedule_cron || 'manual'}</code></div>
-                      <div className="flex items-center justify-between py-1"><span className="text-gray-500">Tarefas</span><span className="font-medium text-gray-700">{Array.isArray(automation.params_json?.tasks) ? automation.params_json.tasks.length : 0}</span></div>
+                      <div className="grid grid-cols-[minmax(0,1fr)_minmax(0,auto)] gap-x-3 py-1"><span className="min-w-0 text-gray-500">Última execução</span><span className="min-w-0 break-words text-right font-medium text-gray-700">{formatDate(automation.last_run_at)}</span></div>
+                      <div className="grid grid-cols-[minmax(0,1fr)_minmax(0,auto)] gap-x-3 py-1"><span className="min-w-0 text-gray-500">Próxima execução</span><span className="min-w-0 break-words text-right font-medium text-gray-700">{formatDate(automation.next_run_at)}</span></div>
+                      <div className="grid grid-cols-[minmax(0,1fr)_minmax(0,auto)] gap-x-3 py-1"><span className="min-w-0 text-gray-500">CRON</span><code className="min-w-0 break-all rounded bg-gray-100 px-2 py-0.5 text-right text-xs text-gray-700">{automation.schedule_cron || 'manual'}</code></div>
+                      <div className="grid grid-cols-[minmax(0,1fr)_minmax(0,auto)] gap-x-3 py-1"><span className="min-w-0 text-gray-500">Tarefas</span><span className="min-w-0 text-right font-medium text-gray-700">{Array.isArray(automation.params_json?.tasks) ? automation.params_json.tasks.length : 0}</span></div>
                     </div>
-                    <div className="mt-auto flex gap-2 p-5">
-                      <button onClick={() => handleRunNow(automation)} disabled={runningId === automation.id} className="flex flex-1 items-center justify-center gap-2 rounded-lg bg-cyan-500 px-4 py-2 text-sm font-semibold text-white hover:bg-cyan-600 disabled:opacity-60"><Play className="h-4 w-4" />{runningId === automation.id ? 'Executando...' : 'Executar'}</button>
-                      <button onClick={() => handleViewAutomationRuns(automation)} className="rounded-lg border border-gray-300 px-3 py-2 text-xs font-semibold text-gray-700 hover:bg-gray-50">Execuções</button>
-                      <button onClick={() => handleQuickToggle(automation)} className="rounded-lg border border-gray-300 px-3 py-2 text-xs font-semibold text-gray-700 hover:bg-gray-50">{automation.is_enabled ? 'Pausar' : 'Ativar'}</button>
+                    <div className="mt-auto flex flex-wrap gap-2 p-5">
+                      <button onClick={() => handleRunNow(automation)} disabled={runningId === automation.id} className="flex min-w-[140px] flex-[1_1_140px] items-center justify-center gap-2 rounded-lg bg-cyan-500 px-4 py-2 text-sm font-semibold text-white hover:bg-cyan-600 disabled:opacity-60"><Play className="h-4 w-4 shrink-0" />{runningId === automation.id ? 'Executando...' : 'Executar'}</button>
+                      <button onClick={() => handleViewAutomationRuns(automation)} className="min-w-[104px] flex-1 rounded-lg border border-gray-300 px-3 py-2 text-xs font-semibold text-gray-700 hover:bg-gray-50">Execuções</button>
+                      <button onClick={() => handleQuickToggle(automation)} className="min-w-[84px] flex-1 rounded-lg border border-gray-300 px-3 py-2 text-xs font-semibold text-gray-700 hover:bg-gray-50">{automation.is_enabled ? 'Pausar' : 'Ativar'}</button>
                     </div>
                   </article>
                 ))}
