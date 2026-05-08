@@ -26,8 +26,11 @@ type FormState = {
   start_date: string;
   end_date: string;
   schedule_enabled: boolean;
+  schedule_mode: 'recurring' | 'once';
   schedule_time: string;
   schedule_days: string[];
+  schedule_once_date: string;
+  schedule_once_time: string;
 };
 
 const defaultForm: FormState = {
@@ -40,8 +43,11 @@ const defaultForm: FormState = {
   start_date: '',
   end_date: '',
   schedule_enabled: false,
+  schedule_mode: 'recurring',
   schedule_time: '08:00',
   schedule_days: ['mon', 'tue', 'wed', 'thu', 'fri'],
+  schedule_once_date: '',
+  schedule_once_time: '08:00',
 };
 
 const WEEK_DAYS = [
@@ -57,7 +63,6 @@ const WEEK_DAYS = [
 const SCHEDULE_PRESETS = [
   { label: 'Diário', days: WEEK_DAYS.map((item) => item.value) },
   { label: 'Dias úteis', days: ['mon', 'tue', 'wed', 'thu', 'fri'] },
-  { label: 'Toda sexta', days: ['fri'] },
   { label: 'Fim de semana', days: ['sat', 'sun'] },
 ];
 
@@ -75,8 +80,11 @@ const formatDate = (value?: string | null) => {
 const parseSchedule = (cron?: string | null, isEnabled?: boolean) => {
   const fallback = {
     schedule_enabled: Boolean(isEnabled && cron),
+    schedule_mode: 'recurring' as const,
     schedule_time: '08:00',
     schedule_days: ['mon', 'tue', 'wed', 'thu', 'fri'],
+    schedule_once_date: '',
+    schedule_once_time: '08:00',
   };
   if (!cron) return fallback;
   const parts = cron.trim().split(/\s+/);
@@ -87,13 +95,21 @@ const parseSchedule = (cron?: string | null, isEnabled?: boolean) => {
   const scheduleDays = days === '*' ? WEEK_DAYS.map((item) => item.value) : days.split(',').map(normalizeScheduleDay).filter(Boolean);
   return {
     schedule_enabled: Boolean(isEnabled),
+    schedule_mode: 'recurring' as const,
     schedule_time: `${parsedHour}:${parsedMinute}`,
     schedule_days: scheduleDays.length ? scheduleDays : fallback.schedule_days,
+    schedule_once_date: '',
+    schedule_once_time: '08:00',
   };
 };
 
 const templateToForm = (template: PromptReportTemplate): FormState => {
   const schedule = parseSchedule(template.schedule_cron, template.is_enabled);
+  const scheduleMode = template.params_json?.schedule_mode === 'once' ? 'once' : schedule.schedule_mode;
+  const onceText = template.params_json?.schedule_once_at ? String(template.params_json.schedule_once_at) : '';
+  const onceMatch = onceText.match(/^(\d{4}-\d{2}-\d{2})T(\d{2}:\d{2})/);
+  const onceDate = onceMatch?.[1] || '';
+  const onceTime = onceMatch?.[2] || schedule.schedule_once_time;
   return {
     name: template.name,
     connector_id: String(template.connector_id),
@@ -104,6 +120,10 @@ const templateToForm = (template: PromptReportTemplate): FormState => {
     start_date: template.params_json?.start_date || '',
     end_date: template.params_json?.end_date || '',
     ...schedule,
+    schedule_enabled: Boolean(template.is_enabled && (template.schedule_cron || template.params_json?.schedule_once_at)),
+    schedule_mode: scheduleMode,
+    schedule_once_date: onceDate,
+    schedule_once_time: onceTime,
   };
 };
 
@@ -205,13 +225,18 @@ ${rules}`;
 };
 
 const buildScheduleCron = (form: FormState) => {
-  if (!form.schedule_enabled) return null;
+  if (!form.schedule_enabled || form.schedule_mode !== 'recurring') return null;
   const [hour = '8', minute = '0'] = form.schedule_time.split(':');
   const normalizedHour = String(Number(hour));
   const normalizedMinute = String(Number(minute));
   const selectedDays = WEEK_DAYS.map((item) => item.value).filter((day) => form.schedule_days.includes(day));
   const days = selectedDays.length === WEEK_DAYS.length ? '*' : selectedDays.join(',');
   return `${normalizedMinute} ${normalizedHour} * * ${days || '*'}`;
+};
+
+const buildOnceSchedule = (form: FormState) => {
+  if (!form.schedule_enabled || form.schedule_mode !== 'once' || !form.schedule_once_date) return null;
+  return `${form.schedule_once_date}T${form.schedule_once_time || '08:00'}:00`;
 };
 
 const PromptReportsPage: React.FC = () => {
@@ -395,6 +420,8 @@ const PromptReportsPage: React.FC = () => {
       query_id: form.query_id.trim() || null,
       start_date: form.start_date || null,
       end_date: form.end_date || null,
+      schedule_mode: form.schedule_enabled ? form.schedule_mode : null,
+      schedule_once_at: buildOnceSchedule(form),
     },
     schedule_cron: buildScheduleCron(form),
     is_enabled: form.schedule_enabled,
@@ -408,6 +435,10 @@ const PromptReportsPage: React.FC = () => {
       const payload = buildPayload();
       if (!payload.name || !payload.prompt_text || !payload.connector_id) {
         setError('Preencha nome, conector e prompt.');
+        return;
+      }
+      if (form.schedule_enabled && form.schedule_mode === 'once' && !form.schedule_once_date) {
+        setError('Informe a data da execução única.');
         return;
       }
       if (selectedId) {
@@ -462,6 +493,10 @@ const PromptReportsPage: React.FC = () => {
     setInfo(null);
     try {
       const payload = buildPayload();
+      if (form.schedule_enabled && form.schedule_mode === 'once' && !form.schedule_once_date) {
+        setError('Informe a data da execução única.');
+        return;
+      }
       // Sync current form data before running to avoid stale template params on backend.
       const synced = await updatePromptReportTemplate(selectedId, payload);
       setTemplates((prev) => prev.map((item) => (item.id === synced.id ? synced : item)));
@@ -712,50 +747,108 @@ const PromptReportsPage: React.FC = () => {
 
               {form.schedule_enabled && (
                 <div className="mt-4 grid grid-cols-1 gap-4 md:grid-cols-3">
-                  <div className="flex flex-col gap-2">
-                    <label className="text-xs font-semibold text-slate-700">Hora</label>
-                    <input
-                      type="time"
-                      className="rounded-lg border border-slate-200 bg-white px-3 py-2"
-                      value={form.schedule_time}
-                      onChange={(e) => setForm((prev) => ({ ...prev, schedule_time: e.target.value }))}
-                    />
-                  </div>
-                  <div className="flex flex-col gap-2 md:col-span-2">
-                    <label className="text-xs font-semibold text-slate-700">Dias que deve rodar</label>
-                    <div className="flex flex-wrap gap-2">
-                      {SCHEDULE_PRESETS.map((preset) => (
-                        <button
-                          key={preset.label}
-                          type="button"
-                          onClick={() => applySchedulePreset(preset.days)}
-                          className="rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 hover:border-blue-300 hover:bg-blue-50 hover:text-blue-700"
-                        >
-                          {preset.label}
-                        </button>
-                      ))}
+                  <div className="flex flex-col gap-2 md:col-span-3">
+                    <label className="text-xs font-semibold text-slate-700">Tipo de agendamento</label>
+                    <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                      <button
+                        type="button"
+                        onClick={() => setForm((prev) => ({ ...prev, schedule_mode: 'recurring' }))}
+                        className={`rounded-lg border px-3 py-2 text-left text-sm font-semibold ${
+                          form.schedule_mode === 'recurring'
+                            ? 'border-blue-600 bg-blue-50 text-blue-800'
+                            : 'border-slate-200 bg-white text-slate-700 hover:bg-slate-50'
+                        }`}
+                      >
+                        Repetir em dias da semana
+                        <span className="mt-1 block text-xs font-normal text-slate-500">Executa sempre nos dias marcados.</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setForm((prev) => ({ ...prev, schedule_mode: 'once' }))}
+                        className={`rounded-lg border px-3 py-2 text-left text-sm font-semibold ${
+                          form.schedule_mode === 'once'
+                            ? 'border-blue-600 bg-blue-50 text-blue-800'
+                            : 'border-slate-200 bg-white text-slate-700 hover:bg-slate-50'
+                        }`}
+                      >
+                        Executar uma vez
+                        <span className="mt-1 block text-xs font-normal text-slate-500">Roda em uma data e hora específicas e depois desativa.</span>
+                      </button>
                     </div>
-                    <div className="flex flex-wrap gap-2">
-                      {WEEK_DAYS.map((day) => (
-                        <button
-                          key={day.value}
-                          type="button"
-                          onClick={() => toggleScheduleDay(day.value)}
-                          aria-pressed={form.schedule_days.includes(day.value)}
-                          className={`min-w-[52px] rounded-lg border px-3 py-2 text-xs font-bold transition ${
-                            form.schedule_days.includes(day.value)
-                              ? 'border-blue-600 bg-blue-600 text-white shadow-sm'
-                              : 'border-slate-200 bg-white text-slate-600 hover:border-slate-300 hover:bg-slate-50'
-                          }`}
-                        >
-                          {day.label}
-                        </button>
-                      ))}
-                    </div>
-                    <p className="text-xs text-slate-500">
-                      Para rodar somente na sexta, clique em "Toda sexta" ou deixe apenas "Sex" marcado. O periodo do relatorio continua sendo definido nas datas inicio e fim acima.
-                    </p>
                   </div>
+
+                  {form.schedule_mode === 'recurring' ? (
+                    <>
+                      <div className="flex flex-col gap-2">
+                        <label className="text-xs font-semibold text-slate-700">Hora</label>
+                        <input
+                          type="time"
+                          className="rounded-lg border border-slate-200 bg-white px-3 py-2"
+                          value={form.schedule_time}
+                          onChange={(e) => setForm((prev) => ({ ...prev, schedule_time: e.target.value }))}
+                        />
+                      </div>
+                      <div className="flex flex-col gap-2 md:col-span-2">
+                        <label className="text-xs font-semibold text-slate-700">Dias que deve rodar</label>
+                        <div className="flex flex-wrap gap-2">
+                          {SCHEDULE_PRESETS.map((preset) => (
+                            <button
+                              key={preset.label}
+                              type="button"
+                              onClick={() => applySchedulePreset(preset.days)}
+                              className="rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 hover:border-blue-300 hover:bg-blue-50 hover:text-blue-700"
+                            >
+                              {preset.label}
+                            </button>
+                          ))}
+                        </div>
+                        <div className="flex flex-wrap gap-2">
+                          {WEEK_DAYS.map((day) => (
+                            <button
+                              key={day.value}
+                              type="button"
+                              onClick={() => toggleScheduleDay(day.value)}
+                              aria-pressed={form.schedule_days.includes(day.value)}
+                              className={`min-w-[52px] rounded-lg border px-3 py-2 text-xs font-bold transition ${
+                                form.schedule_days.includes(day.value)
+                                  ? 'border-blue-600 bg-blue-600 text-white shadow-sm'
+                                  : 'border-slate-200 bg-white text-slate-600 hover:border-slate-300 hover:bg-slate-50'
+                              }`}
+                            >
+                              {day.label}
+                            </button>
+                          ))}
+                        </div>
+                        <p className="text-xs text-slate-500">
+                          O periodo do relatorio continua sendo definido nas datas inicio e fim acima.
+                        </p>
+                      </div>
+                    </>
+                  ) : (
+                    <div className="grid grid-cols-1 gap-4 md:col-span-3 md:grid-cols-2">
+                      <div className="flex flex-col gap-2">
+                        <label className="text-xs font-semibold text-slate-700">Data da execução</label>
+                        <input
+                          type="date"
+                          className="rounded-lg border border-slate-200 bg-white px-3 py-2"
+                          value={form.schedule_once_date}
+                          onChange={(e) => setForm((prev) => ({ ...prev, schedule_once_date: e.target.value }))}
+                        />
+                      </div>
+                      <div className="flex flex-col gap-2">
+                        <label className="text-xs font-semibold text-slate-700">Hora</label>
+                        <input
+                          type="time"
+                          className="rounded-lg border border-slate-200 bg-white px-3 py-2"
+                          value={form.schedule_once_time}
+                          onChange={(e) => setForm((prev) => ({ ...prev, schedule_once_time: e.target.value }))}
+                        />
+                      </div>
+                      <p className="text-xs text-slate-500 md:col-span-2">
+                        Depois que a execução única terminar, o template fica salvo, mas o agendamento é desativado.
+                      </p>
+                    </div>
+                  )}
                 </div>
               )}
             </div>

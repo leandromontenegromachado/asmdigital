@@ -8,6 +8,7 @@ from typing import Any
 
 from apscheduler.schedulers.base import BaseScheduler
 from apscheduler.triggers.cron import CronTrigger
+from apscheduler.triggers.date import DateTrigger
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
@@ -223,6 +224,41 @@ def _next_run_from_cron(cron_expression: str | None) -> datetime | None:
     return trigger.get_next_fire_time(previous_fire_time=None, now=datetime.now(schedule_timezone))
 
 
+def _schedule_timezone() -> ZoneInfo:
+    return ZoneInfo(settings.scheduler_timezone)
+
+
+def _parse_once_schedule(template: PromptReportTemplate) -> datetime | None:
+    params = template.params_json or {}
+    if params.get("schedule_mode") != "once":
+        return None
+    value = params.get("schedule_once_at")
+    if not value:
+        return None
+    text = str(value).strip()
+    if not text:
+        return None
+    try:
+        run_at = datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    schedule_timezone = _schedule_timezone()
+    if run_at.tzinfo is None:
+        return run_at.replace(tzinfo=schedule_timezone)
+    return run_at.astimezone(schedule_timezone)
+
+
+def _next_run_for_template(template: PromptReportTemplate, now: datetime | None = None) -> datetime | None:
+    if not template.is_enabled:
+        return None
+    schedule_timezone = _schedule_timezone()
+    current = now or datetime.now(schedule_timezone)
+    once_run_at = _parse_once_schedule(template)
+    if once_run_at:
+        return once_run_at if once_run_at > current else None
+    return _next_run_from_cron(template.schedule_cron)
+
+
 _CRON_WEEKDAY_NAMES = {
     "0": "sun",
     "7": "sun",
@@ -311,7 +347,7 @@ def run_prompt_report_template(
     db.refresh(report)
 
     template.last_run_at = datetime.now(timezone.utc)
-    template.next_run_at = _next_run_from_cron(template.schedule_cron) if template.is_enabled else None
+    template.next_run_at = _next_run_for_template(template)
     db.commit()
     db.refresh(template)
     return report, filters
@@ -323,10 +359,29 @@ def sync_prompt_report_jobs(db: Session, scheduler: BaseScheduler) -> None:
             scheduler.remove_job(job.id)
 
     templates = db.query(PromptReportTemplate).order_by(PromptReportTemplate.id.asc()).all()
-    schedule_timezone = ZoneInfo(settings.scheduler_timezone)
+    schedule_timezone = _schedule_timezone()
     now = datetime.now(schedule_timezone)
     for template in templates:
-        if not template.is_enabled or not template.schedule_cron:
+        if not template.is_enabled:
+            template.next_run_at = None
+            continue
+
+        once_run_at = _parse_once_schedule(template)
+        if once_run_at:
+            if once_run_at <= now:
+                template.next_run_at = None
+                continue
+            scheduler.add_job(
+                execute_prompt_report_job,
+                trigger=DateTrigger(run_date=once_run_at, timezone=schedule_timezone),
+                id=f"{JOB_PREFIX}{template.id}",
+                args=[template.id],
+                replace_existing=True,
+            )
+            template.next_run_at = once_run_at
+            continue
+
+        if not template.schedule_cron:
             template.next_run_at = None
             continue
 
@@ -356,5 +411,9 @@ def execute_prompt_report_job(template_id: int) -> None:
             return
         try:
             run_prompt_report_template(db, template, trigger="scheduled")
+            if (template.params_json or {}).get("schedule_mode") == "once":
+                template.is_enabled = False
+                template.next_run_at = None
+                db.commit()
         except Exception as exc:  # noqa: BLE001
             logger.exception("prompt_report_job_failed", extra={"template_id": template_id, "error": str(exc)})
