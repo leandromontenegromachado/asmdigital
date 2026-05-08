@@ -336,6 +336,7 @@ const ReportsRedminePage: React.FC = () => {
     subject: { key: 'assunto', label: 'Titulo' },
     assigned_to: { key: 'responsavel', label: 'Atribuido para' },
     due_date: { key: 'data_prevista', label: 'Data prevista' },
+    days_overdue: { key: 'dias_atraso', label: 'Dias em atraso' },
     updated_on: { key: 'alterado_em', label: 'Alterado em' },
     status: { key: 'status_redmine', label: 'Status' },
     priority: { key: 'prioridade', label: 'Prioridade' },

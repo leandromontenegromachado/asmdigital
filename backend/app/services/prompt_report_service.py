@@ -88,6 +88,7 @@ def _prompt_columns(prompt: str) -> list[dict[str, str]]:
         ("subject", "Titulo", ("titulo", "título", "assunto", "demanda")),
         ("assigned_to", "Atribuido para", ("atribuido", "atribuído", "responsavel", "responsável")),
         ("due_date", "Data prevista", ("data prevista", "prevista", "vencimento")),
+        ("days_overdue", "Dias em atraso", ("dias em atraso", "dias atraso", "dias vencido", "dias vencidos")),
         ("updated_on", "Alterado em", ("alterado", "atualizado", "modificado")),
         ("status", "Status", ("status", "situacao", "situação")),
         ("priority", "Prioridade", ("prioridade",)),
@@ -153,6 +154,8 @@ def _parse_prompt_filters(prompt: str, defaults: dict[str, Any]) -> dict[str, An
     query_match = re.search(r"query(?:_id)?\s*[:=]?\s*(\d+)", prompt, flags=re.IGNORECASE)
     if query_match:
         output["query_id"] = query_match.group(1)
+    elif re.search(r"query(?:_id)?\s*[:=-]?\s*(opcional|optional|nenhuma?|sem\s+query|-)", lowered):
+        output["query_id"] = None
 
     project_match = re.search(r"projetos?\s*[:=]\s*([^\r\n]+)", prompt, flags=re.IGNORECASE)
     if project_match:
