@@ -896,48 +896,97 @@ const RoutinesPage: React.FC = () => {
         )}
 
         <section className="mt-10 overflow-hidden rounded-xl border border-gray-200 bg-white shadow-sm">
-          <div className="border-b border-gray-100 px-6 py-4">
+          <div className="border-b border-gray-100 px-4 py-4 sm:px-6">
             <h2 className="text-lg font-bold text-gray-900">Últimas execuções</h2>
             <p className="text-sm text-gray-500">Histórico das 50 execuções mais recentes.</p>
           </div>
           {latestExecutions.length === 0 ? (
             <div className="p-6 text-sm text-gray-500">Nenhuma execução registrada.</div>
           ) : (
-            <div className="overflow-x-auto">
-              <table className="min-w-full text-sm">
-                <thead className="bg-gray-50 text-gray-600"><tr><th className="px-6 py-3 text-left font-semibold">Origem</th><th className="px-6 py-3 text-left font-semibold">Status</th><th className="px-6 py-3 text-left font-semibold">Início</th><th className="px-6 py-3 text-left font-semibold">Fim</th><th className="px-6 py-3 text-left font-semibold">Resultado</th><th className="px-6 py-3 text-left font-semibold">Resumo</th></tr></thead>
-                <tbody>
-                  {latestExecutions.map((item) => {
-                    const isSuccess = item.status === 'success' || item.status === 'completed';
-                    return (
-                      <tr key={item.id} className="border-t border-gray-100">
-                        <td className="px-6 py-3">
-                          <div className="font-medium text-gray-700">{item.name}</div>
-                          <div className="text-xs text-gray-400">{item.kind === 'prompt_report' ? 'Relatório agendado' : 'Rotina'}</div>
-                        </td>
-                        <td className="px-6 py-3"><span className={`inline-flex rounded-full px-2.5 py-0.5 text-xs font-medium ${isSuccess ? 'bg-emerald-100 text-emerald-800' : 'bg-amber-100 text-amber-800'}`}>{item.status}</span></td>
-                        <td className="px-6 py-3 text-gray-500">{new Date(item.startedAt).toLocaleString('pt-BR')}</td>
-                        <td className="px-6 py-3 text-gray-500">{item.finishedAt ? new Date(item.finishedAt).toLocaleString('pt-BR') : '-'}</td>
-                        <td className="px-6 py-3">
-                          {item.reportId ? (
-                            <a href={`/reports/redmine-deliveries?report_id=${item.reportId}`} className="font-semibold text-cyan-600 hover:text-cyan-700">Abrir relatório #{item.reportId}</a>
-                          ) : (
-                            <span className="text-gray-400">-</span>
-                          )}
-                        </td>
-                        <td className="px-6 py-3">
-                          {item.kind === 'automation' && item.run ? (
-                            <button onClick={() => openRunDetail(item.run)} className="font-semibold text-cyan-600 hover:text-cyan-700">{item.summary}</button>
-                          ) : (
-                            <span className="text-gray-500">{item.summary}</span>
-                          )}
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
+            <>
+              <div className="divide-y divide-gray-100 xl:hidden">
+                {latestExecutions.map((item) => {
+                  const isSuccess = item.status === 'success' || item.status === 'completed';
+                  return (
+                    <article key={`latest-card-${item.id}`} className="p-4 sm:p-5">
+                      <div className="flex flex-wrap items-start justify-between gap-3">
+                        <div className="min-w-0 flex-1">
+                          <h3 className="break-words text-base font-semibold leading-snug text-gray-800">{item.name}</h3>
+                          <p className="mt-1 text-xs text-gray-400">{item.kind === 'prompt_report' ? 'Relatório agendado' : 'Rotina'}</p>
+                        </div>
+                        <span className={`inline-flex max-w-full shrink-0 rounded-full px-2.5 py-0.5 text-xs font-medium ${isSuccess ? 'bg-emerald-100 text-emerald-800' : 'bg-amber-100 text-amber-800'}`}>{item.status}</span>
+                      </div>
+                      <div className="mt-4 grid grid-cols-1 gap-3 text-sm sm:grid-cols-2">
+                        <div className="min-w-0">
+                          <span className="block text-xs font-semibold uppercase tracking-wide text-gray-400">Início</span>
+                          <span className="mt-1 block break-words text-gray-600">{new Date(item.startedAt).toLocaleString('pt-BR')}</span>
+                        </div>
+                        <div className="min-w-0">
+                          <span className="block text-xs font-semibold uppercase tracking-wide text-gray-400">Fim</span>
+                          <span className="mt-1 block break-words text-gray-600">{item.finishedAt ? new Date(item.finishedAt).toLocaleString('pt-BR') : '-'}</span>
+                        </div>
+                      </div>
+                      <div className="mt-4 flex flex-col gap-2 sm:flex-row sm:flex-wrap">
+                        {item.reportId ? (
+                          <a href={`/reports/redmine-deliveries?report_id=${item.reportId}`} className="inline-flex min-h-10 items-center justify-center rounded-lg border border-cyan-200 px-3 py-2 text-sm font-semibold text-cyan-700 hover:bg-cyan-50">Abrir relatório #{item.reportId}</a>
+                        ) : (
+                          <span className="text-sm text-gray-400">Sem relatório vinculado</span>
+                        )}
+                        {item.kind === 'automation' && item.run ? (
+                          <button onClick={() => openRunDetail(item.run)} className="inline-flex min-h-10 items-center justify-center rounded-lg border border-gray-300 px-3 py-2 text-sm font-semibold text-gray-700 hover:bg-gray-50">{item.summary}</button>
+                        ) : (
+                          <span className="min-w-0 break-words text-sm text-gray-500">{item.summary}</span>
+                        )}
+                      </div>
+                    </article>
+                  );
+                })}
+              </div>
+              <div className="hidden overflow-x-auto xl:block">
+                <table className="min-w-[980px] table-fixed text-sm">
+                  <thead className="bg-gray-50 text-gray-600">
+                    <tr>
+                      <th className="w-64 px-5 py-3 text-left font-semibold">Origem</th>
+                      <th className="w-36 px-5 py-3 text-left font-semibold">Status</th>
+                      <th className="w-44 px-5 py-3 text-left font-semibold">Início</th>
+                      <th className="w-44 px-5 py-3 text-left font-semibold">Fim</th>
+                      <th className="w-44 px-5 py-3 text-left font-semibold">Resultado</th>
+                      <th className="px-5 py-3 text-left font-semibold">Resumo</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {latestExecutions.map((item) => {
+                      const isSuccess = item.status === 'success' || item.status === 'completed';
+                      return (
+                        <tr key={item.id} className="border-t border-gray-100 align-top">
+                          <td className="px-5 py-3">
+                            <div className="break-words font-medium text-gray-700">{item.name}</div>
+                            <div className="text-xs text-gray-400">{item.kind === 'prompt_report' ? 'Relatório agendado' : 'Rotina'}</div>
+                          </td>
+                          <td className="px-5 py-3"><span className={`inline-flex max-w-full rounded-full px-2.5 py-0.5 text-xs font-medium ${isSuccess ? 'bg-emerald-100 text-emerald-800' : 'bg-amber-100 text-amber-800'}`}>{item.status}</span></td>
+                          <td className="break-words px-5 py-3 text-gray-500">{new Date(item.startedAt).toLocaleString('pt-BR')}</td>
+                          <td className="break-words px-5 py-3 text-gray-500">{item.finishedAt ? new Date(item.finishedAt).toLocaleString('pt-BR') : '-'}</td>
+                          <td className="px-5 py-3">
+                            {item.reportId ? (
+                              <a href={`/reports/redmine-deliveries?report_id=${item.reportId}`} className="break-words font-semibold text-cyan-600 hover:text-cyan-700">Abrir relatório #{item.reportId}</a>
+                            ) : (
+                              <span className="text-gray-400">-</span>
+                            )}
+                          </td>
+                          <td className="px-5 py-3">
+                            {item.kind === 'automation' && item.run ? (
+                              <button onClick={() => openRunDetail(item.run)} className="break-words text-left font-semibold text-cyan-600 hover:text-cyan-700">{item.summary}</button>
+                            ) : (
+                              <span className="break-words text-gray-500">{item.summary}</span>
+                            )}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </>
           )}
         </section>
       </div>
