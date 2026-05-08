@@ -11,6 +11,7 @@ import {
   MessageCircle,
   LogOut,
   Trophy,
+  SlidersHorizontal,
 } from 'lucide-react';
 import { useAuth } from '../app/auth';
 
@@ -204,6 +205,24 @@ export const Sidebar: React.FC = () => {
             <>
               <Bell className={isActive ? 'text-primary' : 'text-slate-400 group-hover:text-primary'} size={20} />
               <p className={`text-sm ${isActive ? 'font-bold text-slate-900' : 'font-medium text-slate-600 group-hover:text-slate-900'} transition-colors`}>Notificações</p>
+            </>
+          )}
+        </NavLink>
+
+        <NavLink
+          to="/regras-gerenciais"
+          className={({ isActive }) =>
+            `${linkBase} ${
+              isActive
+                ? 'bg-blue-50 border-primary'
+                : 'hover:bg-slate-50 border-transparent'
+            }`
+          }
+        >
+          {({ isActive }) => (
+            <>
+              <SlidersHorizontal className={isActive ? 'text-primary' : 'text-slate-400 group-hover:text-primary'} size={20} />
+              <p className={`text-sm ${isActive ? 'font-bold text-slate-900' : 'font-medium text-slate-600 group-hover:text-slate-900'} transition-colors`}>Regras Gerenciais</p>
             </>
           )}
         </NavLink>
