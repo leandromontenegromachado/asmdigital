@@ -17,6 +17,7 @@ from sqlalchemy.orm import Session
 from app.core.config import settings
 from app.db.session import SessionLocal
 from app.models import Automation, AutomationRun, Connector, PromptReportTemplate, Report
+from app.services.management_event_service import register_management_event_safe
 from app.services.notification_service import send_notifications_for_automation_run
 from app.services.azure_devops_service import AZURE_CONNECTOR_TYPES, query_snapshot
 from app.services.prompt_report_service import run_prompt_report_template
@@ -640,6 +641,26 @@ def run_automation(db: Session, automation: Automation, simulation: bool = False
 
     db.commit()
     db.refresh(run)
+
+    register_management_event_safe(
+        db,
+        event_type="ROUTINE_EXECUTED" if final_status == "success" else "ROUTINE_FAILED",
+        title=f"Rotina executada: {automation.name}" if final_status == "success" else f"Rotina com falha: {automation.name}",
+        description=message,
+        source_module="automation",
+        source_id=run.id,
+        severity="low" if final_status == "success" else ("medium" if final_status == "completed_with_errors" else "high"),
+        payload_json={
+            "automation_id": automation.id,
+            "automation_name": automation.name,
+            "run_id": run.id,
+            "status": final_status,
+            "simulation": simulation,
+            "items": len(tasks),
+            "totals": summary.get("totals", {}),
+            "errors": errors,
+        },
+    )
 
     try:
         actionable_notifications = send_notifications_for_automation_run(db, automation, run, simulation=simulation)

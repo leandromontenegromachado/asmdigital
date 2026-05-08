@@ -1,12 +1,16 @@
 from __future__ import annotations
 
+import logging
 from datetime import datetime, timezone
+from typing import Any
 
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.models import Employee, ManagementEvent, User
 from app.schemas.management_events import ManagementEventCreate, ManagementEventUpdate
+
+logger = logging.getLogger(__name__)
 
 
 class ManagementEventService:
@@ -119,3 +123,51 @@ def management_event_to_out(event: ManagementEvent):
         created_at=event.created_at,
         updated_at=event.updated_at,
     )
+
+
+def register_management_event_safe(
+    db: Session,
+    *,
+    event_type: str,
+    title: str,
+    description: str | None = None,
+    source_module: str | None = None,
+    source_id: str | int | None = None,
+    severity: str = "medium",
+    status: str = "pending",
+    payload_json: dict[str, Any] | None = None,
+) -> ManagementEvent | None:
+    try:
+        payload = {
+            **(payload_json or {}),
+            "source_module": source_module,
+        }
+        event = ManagementEvent(
+            title=title,
+            description=description,
+            event_type=event_type,
+            source_type=source_module,
+            source_id=str(source_id) if source_id is not None else None,
+            status=status,
+            severity=severity,
+            payload_json=payload,
+        )
+        db.add(event)
+        db.commit()
+        db.refresh(event)
+        return event
+    except Exception as exc:  # noqa: BLE001
+        logger.exception(
+            "management_event_registration_failed",
+            extra={
+                "event_type": event_type,
+                "source_module": source_module,
+                "source_id": str(source_id) if source_id is not None else None,
+                "error": str(exc),
+            },
+        )
+        try:
+            db.rollback()
+        except Exception:  # noqa: BLE001
+            logger.exception("management_event_registration_rollback_failed")
+        return None

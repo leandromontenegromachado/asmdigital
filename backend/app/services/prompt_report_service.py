@@ -15,6 +15,7 @@ from app.core.config import settings
 from app.adapters.redmine import RedmineAdapter
 from app.db.session import SessionLocal
 from app.models import Connector, PromptReportTemplate, Report
+from app.services.management_event_service import register_management_event_safe
 from app.services.report_service import generate_redmine_report
 
 logger = logging.getLogger(__name__)
@@ -373,6 +374,30 @@ def run_prompt_report_template(
     template.next_run_at = _next_run_for_template(template)
     db.commit()
     db.refresh(template)
+    register_management_event_safe(
+        db,
+        event_type="ROUTINE_EXECUTED",
+        title=f"Relatorio executado: {template.name}",
+        description=f"Relatorio #{report.id} gerado a partir do template #{template.id}.",
+        source_module="prompt_report",
+        source_id=report.id,
+        severity="low",
+        payload_json={
+            "template_id": template.id,
+            "template_name": template.name,
+            "report_id": report.id,
+            "report_status": report.status,
+            "trigger": trigger,
+            "records": (report.params_json or {}).get("records"),
+            "filters": {
+                "project_ids": filters.get("project_ids"),
+                "status_id": filters.get("status_id"),
+                "query_id": filters.get("query_id"),
+                "start_date": str(filters.get("start_date")) if filters.get("start_date") else None,
+                "end_date": str(filters.get("end_date")) if filters.get("end_date") else None,
+            },
+        },
+    )
     return report, filters
 
 
@@ -440,3 +465,18 @@ def execute_prompt_report_job(template_id: int) -> None:
                 db.commit()
         except Exception as exc:  # noqa: BLE001
             logger.exception("prompt_report_job_failed", extra={"template_id": template_id, "error": str(exc)})
+            register_management_event_safe(
+                db,
+                event_type="ROUTINE_FAILED",
+                title=f"Falha ao executar relatorio: {template.name}",
+                description=str(exc),
+                source_module="prompt_report",
+                source_id=template.id,
+                severity="high",
+                payload_json={
+                    "template_id": template.id,
+                    "template_name": template.name,
+                    "trigger": "scheduled",
+                    "error": str(exc),
+                },
+            )
