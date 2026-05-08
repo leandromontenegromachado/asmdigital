@@ -573,7 +573,235 @@ Endpoints:
 - `GET /api/notifications`
 - `POST /api/notifications/{id}/retry`
 
-## 12. ChefIA / Fala AI
+## 12. Eventos, Pendencias e Regras Gerenciais
+
+Menu:
+
+- **Executivo**
+- **Regras Gerenciais**
+
+Esse modulo permite transformar eventos gerenciais em acoes configuraveis. A regra fica separada do relatorio ou da rotina, evitando logica fixa dentro de cada rotina.
+
+Fluxo basico:
+
+1. Uma rotina, relatorio ou acao do sistema gera um evento gerencial.
+2. O usuario cria uma regra gerencial.
+3. A regra verifica o evento usando `condition_json`.
+4. Se a condicao for atendida, o sistema executa a acao definida em `action_json`.
+5. Toda acao aplicada fica registrada no historico.
+
+### 12.1. Dashboard Executivo
+
+Menu:
+
+- **Executivo**
+
+O dashboard executivo mostra:
+
+- Total de eventos de hoje.
+- Eventos novos.
+- Eventos `high`.
+- Eventos `critical`.
+- Pendencias abertas.
+- Pendencias vencidas.
+- Pendencias escaladas.
+- Rotinas com falha hoje.
+- Top 5 projetos com mais eventos.
+- Top 5 responsaveis com mais pendencias.
+- Lista de eventos criticos.
+- Lista de pendencias vencidas.
+
+Endpoint:
+
+- `GET /api/executive-dashboard/summary`
+
+### 12.2. Criar regra gerencial
+
+Menu:
+
+- **Regras Gerenciais**
+
+Campos principais:
+
+- **Nome**: nome da regra.
+- **Descricao**: explicacao de quando a regra deve ser aplicada.
+- **Prioridade**: ordem de execucao. Numero menor executa antes.
+- **Regra ativa**: indica se a regra deve ser considerada.
+- **Condition JSON**: condicao que o evento precisa atender.
+- **Action JSON**: acao que deve ser registrada/executada.
+
+Exemplo:
+
+Nome:
+
+```text
+Falha de rotina vira pendencia
+```
+
+Condition JSON:
+
+```json
+{
+  "event_type": {
+    "eq": "ROUTINE_FAILED"
+  }
+}
+```
+
+Action JSON:
+
+```json
+{
+  "type": "create_pending_item"
+}
+```
+
+Essa regra cria uma pendencia quando o evento gerencial for do tipo `ROUTINE_FAILED`.
+
+### 12.3. Operadores do `condition_json`
+
+Operadores disponiveis:
+
+- `eq`: igual.
+- `neq`: diferente.
+- `gt`: maior que.
+- `gte`: maior ou igual.
+- `lt`: menor que.
+- `lte`: menor ou igual.
+- `contains`: contem texto ou item.
+
+Exemplo por severidade:
+
+```json
+{
+  "severity": {
+    "eq": "high"
+  }
+}
+```
+
+Exemplo usando dado dentro do `payload_json`:
+
+```json
+{
+  "field": "payload_json.dias_atraso",
+  "op": "gte",
+  "value": 5
+}
+```
+
+Exemplo com duas condicoes obrigatorias:
+
+```json
+{
+  "all": [
+    {
+      "field": "event_type",
+      "op": "eq",
+      "value": "ROUTINE_FAILED"
+    },
+    {
+      "field": "severity",
+      "op": "eq",
+      "value": "high"
+    }
+  ]
+}
+```
+
+Exemplo com alternativas:
+
+```json
+{
+  "any": [
+    {
+      "field": "severity",
+      "op": "eq",
+      "value": "critical"
+    },
+    {
+      "field": "payload_json.dias_atraso",
+      "op": "gte",
+      "value": 10
+    }
+  ]
+}
+```
+
+### 12.4. Acoes do `action_json`
+
+Criar pendencia:
+
+```json
+{
+  "type": "create_pending_item"
+}
+```
+
+Marcar evento como processado:
+
+```json
+{
+  "type": "mark_processed"
+}
+```
+
+Ignorar evento:
+
+```json
+{
+  "type": "ignore"
+}
+```
+
+Registrar placeholder de notificacao:
+
+```json
+{
+  "type": "notify_responsible"
+}
+```
+
+Observacao: `notify_responsible` ainda nao envia notificacao real nesta fase. Ele apenas registra a acao executada para manter historico e preparar a integracao futura.
+
+Tambem e possivel executar mais de uma acao:
+
+```json
+{
+  "actions": [
+    {
+      "type": "create_pending_item"
+    },
+    {
+      "type": "notify_responsible"
+    }
+  ]
+}
+```
+
+### 12.5. Aplicar regras em um evento
+
+As regras podem ser aplicadas em um evento gerencial pelo endpoint:
+
+- `POST /api/management-events/{id}/apply-rules`
+
+O retorno informa:
+
+- ID do evento.
+- Quantidade de regras encontradas.
+- Lista de acoes executadas/registradas.
+
+Endpoints de regras:
+
+- `GET /api/management-events/rules`
+- `POST /api/management-events/rules`
+- `GET /api/management-events/rules/{rule_id}`
+- `PUT /api/management-events/rules/{rule_id}`
+- `DELETE /api/management-events/rules/{rule_id}`
+
+Observacao: excluir uma regra pela tela/API desativa a regra para preservar o historico de acoes ja executadas.
+
+## 13. ChefIA / Fala AI
 
 Menu:
 
@@ -591,7 +819,7 @@ Mais detalhes:
 
 - `docs/FALA_AI.md`
 
-## 13. Avaliação
+## 14. Avaliação
 
 Menu:
 
@@ -608,7 +836,7 @@ Submódulos:
 
 O cadastro de funcionários é compartilhado com esse módulo. Use **Funcionários** para manter dados básicos atualizados.
 
-## 14. MCP Redmine
+## 15. MCP Redmine
 
 O projeto inclui servidor MCP para Redmine.
 
@@ -636,7 +864,7 @@ Mais detalhes:
 
 - `docs/MCP_REDMINE.md`
 
-## 15. Publicação no Servidor de Teste
+## 16. Publicação no Servidor de Teste
 
 Fluxo recomendado:
 
@@ -678,9 +906,9 @@ netsh interface portproxy add v4tov4 listenaddress=0.0.0.0 listenport=3000 conne
 New-NetFirewallRule -DisplayName "ASMDIGITAL Frontend 3000" -Direction Inbound -Action Allow -Protocol TCP -LocalPort 3000
 ```
 
-## 16. Troubleshooting
+## 17. Troubleshooting
 
-### 16.1. Redmine não retorna dados
+### 17.1. Redmine não retorna dados
 
 Verificar:
 
@@ -696,7 +924,7 @@ Teste:
 docker compose logs --tail 120 backend
 ```
 
-### 16.2. Docker não conecta ao daemon
+### 17.2. Docker não conecta ao daemon
 
 Erro comum:
 
@@ -711,7 +939,7 @@ service docker start
 docker info
 ```
 
-### 16.3. Problemas de iptables no WSL
+### 17.3. Problemas de iptables no WSL
 
 Se Docker falhar por `iptables`/`nft`, usar legacy pode ser necessário:
 
@@ -721,7 +949,7 @@ update-alternatives --set ip6tables /usr/sbin/ip6tables-legacy
 service docker restart
 ```
 
-### 16.4. Frontend não atualiza
+### 17.4. Frontend não atualiza
 
 Rebuild:
 
@@ -736,7 +964,7 @@ No navegador:
 Ctrl + F5
 ```
 
-### 16.5. Migration falha
+### 17.5. Migration falha
 
 Ver logs:
 
@@ -750,7 +978,7 @@ Conferir versão do banco:
 docker compose exec -T db psql -U postgres -d asmdigital -c "select version_num from alembic_version;"
 ```
 
-### 16.6. Email não envia
+### 17.6. Email não envia
 
 Verificar:
 
@@ -763,7 +991,7 @@ Verificar:
 
 Se SMTP estiver vazio, o sistema registra/simula envio.
 
-## 17. Endpoints Principais
+## 18. Endpoints Principais
 
 Autenticação:
 
@@ -823,7 +1051,43 @@ Notificações:
 - `GET /api/notifications`
 - `POST /api/notifications/{id}/retry`
 
-## 18. Arquitetura Resumida
+Dashboard executivo:
+
+- `GET /api/executive-dashboard/summary`
+
+Eventos gerenciais:
+
+- `GET /api/management-events`
+- `POST /api/management-events`
+- `GET /api/management-events/{id}`
+- `PUT /api/management-events/{id}`
+- `POST /api/management-events/{id}/process`
+- `POST /api/management-events/{id}/ignore`
+- `POST /api/management-events/{id}/convert-to-pending`
+- `POST /api/management-events/{id}/apply-rules`
+
+Regras gerenciais:
+
+- `GET /api/management-events/rules`
+- `POST /api/management-events/rules`
+- `GET /api/management-events/rules/{rule_id}`
+- `PUT /api/management-events/rules/{rule_id}`
+- `DELETE /api/management-events/rules/{rule_id}`
+
+Pendencias:
+
+- `GET /api/pending-items`
+- `POST /api/pending-items`
+- `GET /api/pending-items/{id}`
+- `PUT /api/pending-items/{id}`
+- `POST /api/pending-items/{id}/comment`
+- `POST /api/pending-items/{id}/resolve`
+- `POST /api/pending-items/{id}/ignore`
+- `POST /api/pending-items/{id}/escalate`
+- `POST /api/pending-items/{id}/reopen`
+- `GET /api/pending-items/dashboard/summary`
+
+## 19. Arquitetura Resumida
 
 Backend:
 
@@ -861,7 +1125,7 @@ frontend/src/components
 docs
 ```
 
-## 19. Boas Práticas de Operação
+## 20. Boas Práticas de Operação
 
 - Manter `.env` fora do Git.
 - Usar `.env.example` apenas como referência.
