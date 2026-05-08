@@ -148,6 +148,30 @@ class Notification(Base):
     employee = relationship("Employee")
 
 
+class ManagementEvent(Base):
+    __tablename__ = "management_events"
+
+    id = Column(Integer, primary_key=True, index=True)
+    title = Column(String(200), nullable=False)
+    description = Column(Text, nullable=True)
+    event_type = Column(String(80), nullable=False, index=True)
+    source_type = Column(String(80), nullable=True, index=True)
+    source_id = Column(String(120), nullable=True, index=True)
+    status = Column(String(40), nullable=False, default="pending", index=True)
+    severity = Column(String(40), nullable=False, default="medium", index=True)
+    responsible_id = Column(Integer, ForeignKey("employees.id"), nullable=True, index=True)
+    created_by = Column(Integer, ForeignKey("users.id"), nullable=True, index=True)
+    payload_json = Column(JSONB, nullable=False, default=dict)
+    processed_at = Column(DateTime(timezone=True), nullable=True)
+    ignored_at = Column(DateTime(timezone=True), nullable=True)
+    resolution_note = Column(Text, nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
+
+    responsible = relationship("Employee")
+    creator = relationship("User")
+
+
 class NotificationTemplate(Base):
     __tablename__ = "notification_templates"
 
