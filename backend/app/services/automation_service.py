@@ -68,14 +68,46 @@ def ensure_default_automations(db: Session) -> None:
 def validate_cron_expression(cron_expression: str | None) -> None:
     if not cron_expression:
         return
-    CronTrigger.from_crontab(cron_expression)
+    CronTrigger.from_crontab(_normalize_crontab_weekdays(cron_expression))
 
 
 def next_run_from_cron(cron_expression: str | None) -> datetime | None:
     if not cron_expression:
         return None
-    trigger = CronTrigger.from_crontab(cron_expression, timezone=timezone.utc)
+    trigger = CronTrigger.from_crontab(_normalize_crontab_weekdays(cron_expression), timezone=timezone.utc)
     return trigger.get_next_fire_time(previous_fire_time=None, now=datetime.now(timezone.utc))
+
+
+_CRON_WEEKDAY_NAMES = {
+    "0": "sun",
+    "7": "sun",
+    "1": "mon",
+    "2": "tue",
+    "3": "wed",
+    "4": "thu",
+    "5": "fri",
+    "6": "sat",
+}
+
+
+def _normalize_crontab_weekdays(cron_expression: str) -> str:
+    parts = cron_expression.strip().split()
+    if len(parts) != 5:
+        return cron_expression
+
+    def normalize_token(token: str) -> str:
+        if token in ("*", "?"):
+            return token
+        if "/" in token:
+            base, step = token.split("/", 1)
+            return f"{normalize_token(base)}/{step}"
+        if "-" in token:
+            start, end = token.split("-", 1)
+            return f"{_CRON_WEEKDAY_NAMES.get(start, start)}-{_CRON_WEEKDAY_NAMES.get(end, end)}"
+        return _CRON_WEEKDAY_NAMES.get(token, token)
+
+    parts[4] = ",".join(normalize_token(item.strip().lower()) for item in parts[4].split(",") if item.strip())
+    return " ".join(parts)
 
 
 def _parse_iso_date(value: Any) -> date | None:
@@ -661,7 +693,7 @@ def sync_automation_jobs(db: Session, scheduler: BaseScheduler) -> None:
             continue
 
         try:
-            trigger = CronTrigger.from_crontab(automation.schedule_cron, timezone=timezone.utc)
+            trigger = CronTrigger.from_crontab(_normalize_crontab_weekdays(automation.schedule_cron), timezone=timezone.utc)
         except ValueError:
             automation.next_run_at = None
             continue

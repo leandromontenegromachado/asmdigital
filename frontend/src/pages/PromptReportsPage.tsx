@@ -41,18 +41,31 @@ const defaultForm: FormState = {
   end_date: '',
   schedule_enabled: false,
   schedule_time: '08:00',
-  schedule_days: ['1', '2', '3', '4', '5'],
+  schedule_days: ['mon', 'tue', 'wed', 'thu', 'fri'],
 };
 
 const WEEK_DAYS = [
-  { value: '1', label: 'Seg' },
-  { value: '2', label: 'Ter' },
-  { value: '3', label: 'Qua' },
-  { value: '4', label: 'Qui' },
-  { value: '5', label: 'Sex' },
-  { value: '6', label: 'Sab' },
-  { value: '0', label: 'Dom' },
+  { value: 'mon', legacy: '1', label: 'Seg' },
+  { value: 'tue', legacy: '2', label: 'Ter' },
+  { value: 'wed', legacy: '3', label: 'Qua' },
+  { value: 'thu', legacy: '4', label: 'Qui' },
+  { value: 'fri', legacy: '5', label: 'Sex' },
+  { value: 'sat', legacy: '6', label: 'Sab' },
+  { value: 'sun', legacy: '0', label: 'Dom' },
 ];
+
+const SCHEDULE_PRESETS = [
+  { label: 'Diário', days: WEEK_DAYS.map((item) => item.value) },
+  { label: 'Dias úteis', days: ['mon', 'tue', 'wed', 'thu', 'fri'] },
+  { label: 'Toda sexta', days: ['fri'] },
+  { label: 'Fim de semana', days: ['sat', 'sun'] },
+];
+
+const normalizeScheduleDay = (day: string) => {
+  const normalized = day.trim().toLowerCase();
+  const legacy = WEEK_DAYS.find((item) => item.legacy === normalized || item.value === normalized);
+  return legacy?.value || normalized;
+};
 
 const formatDate = (value?: string | null) => {
   if (!value) return '-';
@@ -63,7 +76,7 @@ const parseSchedule = (cron?: string | null, isEnabled?: boolean) => {
   const fallback = {
     schedule_enabled: Boolean(isEnabled && cron),
     schedule_time: '08:00',
-    schedule_days: ['1', '2', '3', '4', '5'],
+    schedule_days: ['mon', 'tue', 'wed', 'thu', 'fri'],
   };
   if (!cron) return fallback;
   const parts = cron.trim().split(/\s+/);
@@ -71,7 +84,7 @@ const parseSchedule = (cron?: string | null, isEnabled?: boolean) => {
   const [minute, hour, , , days] = parts;
   const parsedHour = hour.padStart(2, '0');
   const parsedMinute = minute.padStart(2, '0');
-  const scheduleDays = days === '*' ? WEEK_DAYS.map((item) => item.value) : days.split(',').filter(Boolean);
+  const scheduleDays = days === '*' ? WEEK_DAYS.map((item) => item.value) : days.split(',').map(normalizeScheduleDay).filter(Boolean);
   return {
     schedule_enabled: Boolean(isEnabled),
     schedule_time: `${parsedHour}:${parsedMinute}`,
@@ -196,7 +209,8 @@ const buildScheduleCron = (form: FormState) => {
   const [hour = '8', minute = '0'] = form.schedule_time.split(':');
   const normalizedHour = String(Number(hour));
   const normalizedMinute = String(Number(minute));
-  const days = form.schedule_days.length === WEEK_DAYS.length ? '*' : form.schedule_days.join(',');
+  const selectedDays = WEEK_DAYS.map((item) => item.value).filter((day) => form.schedule_days.includes(day));
+  const days = selectedDays.length === WEEK_DAYS.length ? '*' : selectedDays.join(',');
   return `${normalizedMinute} ${normalizedHour} * * ${days || '*'}`;
 };
 
@@ -349,6 +363,10 @@ const PromptReportsPage: React.FC = () => {
         : [...prev.schedule_days, day];
       return { ...prev, schedule_days: scheduleDays };
     });
+  };
+
+  const applySchedulePreset = (days: string[]) => {
+    setForm((prev) => ({ ...prev, schedule_days: days }));
   };
 
   const handleCopyPrompt = async () => {
@@ -706,15 +724,28 @@ const PromptReportsPage: React.FC = () => {
                   <div className="flex flex-col gap-2 md:col-span-2">
                     <label className="text-xs font-semibold text-slate-700">Dias que deve rodar</label>
                     <div className="flex flex-wrap gap-2">
+                      {SCHEDULE_PRESETS.map((preset) => (
+                        <button
+                          key={preset.label}
+                          type="button"
+                          onClick={() => applySchedulePreset(preset.days)}
+                          className="rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 hover:border-blue-300 hover:bg-blue-50 hover:text-blue-700"
+                        >
+                          {preset.label}
+                        </button>
+                      ))}
+                    </div>
+                    <div className="flex flex-wrap gap-2">
                       {WEEK_DAYS.map((day) => (
                         <button
                           key={day.value}
                           type="button"
                           onClick={() => toggleScheduleDay(day.value)}
-                          className={`rounded-lg border px-3 py-2 text-xs font-bold ${
+                          aria-pressed={form.schedule_days.includes(day.value)}
+                          className={`min-w-[52px] rounded-lg border px-3 py-2 text-xs font-bold transition ${
                             form.schedule_days.includes(day.value)
-                              ? 'border-blue-300 bg-blue-50 text-blue-700'
-                              : 'border-slate-200 bg-white text-slate-600'
+                              ? 'border-blue-600 bg-blue-600 text-white shadow-sm'
+                              : 'border-slate-200 bg-white text-slate-600 hover:border-slate-300 hover:bg-slate-50'
                           }`}
                         >
                           {day.label}
@@ -722,7 +753,7 @@ const PromptReportsPage: React.FC = () => {
                       ))}
                     </div>
                     <p className="text-xs text-slate-500">
-                      O periodo do relatorio continua sendo definido nas datas inicio e fim acima.
+                      Para rodar somente na sexta, clique em "Toda sexta" ou deixe apenas "Sex" marcado. O periodo do relatorio continua sendo definido nas datas inicio e fim acima.
                     </p>
                   </div>
                 </div>

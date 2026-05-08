@@ -212,15 +212,48 @@ def _parse_prompt_filters(prompt: str, defaults: dict[str, Any]) -> dict[str, An
 def validate_cron_expression(cron_expression: str | None) -> None:
     if not cron_expression:
         return
-    CronTrigger.from_crontab(cron_expression)
+    CronTrigger.from_crontab(_normalize_crontab_weekdays(cron_expression))
 
 
 def _next_run_from_cron(cron_expression: str | None) -> datetime | None:
     if not cron_expression:
         return None
     schedule_timezone = ZoneInfo(settings.scheduler_timezone)
-    trigger = CronTrigger.from_crontab(cron_expression, timezone=schedule_timezone)
+    trigger = CronTrigger.from_crontab(_normalize_crontab_weekdays(cron_expression), timezone=schedule_timezone)
     return trigger.get_next_fire_time(previous_fire_time=None, now=datetime.now(schedule_timezone))
+
+
+_CRON_WEEKDAY_NAMES = {
+    "0": "sun",
+    "7": "sun",
+    "1": "mon",
+    "2": "tue",
+    "3": "wed",
+    "4": "thu",
+    "5": "fri",
+    "6": "sat",
+}
+
+
+def _normalize_crontab_weekdays(cron_expression: str) -> str:
+    """Use standard crontab weekday numbers before passing the expression to APScheduler."""
+    parts = cron_expression.strip().split()
+    if len(parts) != 5:
+        return cron_expression
+
+    def normalize_token(token: str) -> str:
+        if token in ("*", "?"):
+            return token
+        if "/" in token:
+            base, step = token.split("/", 1)
+            return f"{normalize_token(base)}/{step}"
+        if "-" in token:
+            start, end = token.split("-", 1)
+            return f"{_CRON_WEEKDAY_NAMES.get(start, start)}-{_CRON_WEEKDAY_NAMES.get(end, end)}"
+        return _CRON_WEEKDAY_NAMES.get(token, token)
+
+    parts[4] = ",".join(normalize_token(item.strip().lower()) for item in parts[4].split(",") if item.strip())
+    return " ".join(parts)
 
 
 def run_prompt_report_template(
@@ -298,7 +331,7 @@ def sync_prompt_report_jobs(db: Session, scheduler: BaseScheduler) -> None:
             continue
 
         try:
-            trigger = CronTrigger.from_crontab(template.schedule_cron, timezone=schedule_timezone)
+            trigger = CronTrigger.from_crontab(_normalize_crontab_weekdays(template.schedule_cron), timezone=schedule_timezone)
         except ValueError:
             logger.warning("invalid_prompt_report_cron", extra={"template_id": template.id, "cron": template.schedule_cron})
             template.next_run_at = None
