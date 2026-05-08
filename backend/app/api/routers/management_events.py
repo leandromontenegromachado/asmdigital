@@ -11,7 +11,9 @@ from app.schemas.management_events import (
     ManagementEventSummary,
     ManagementEventUpdate,
 )
+from app.schemas.pending_items import PendingItemOut
 from app.services.management_event_service import ManagementEventService, management_event_to_out
+from app.services.pending_item_service import PendingItemService, pending_item_to_out
 
 router = APIRouter(prefix="/management-events", tags=["management-events"])
 
@@ -105,3 +107,17 @@ def ignore_management_event(
     if not event:
         raise HTTPException(status_code=404, detail="Management event not found")
     return management_event_to_out(service.ignore_event(event, payload.note if payload else None))
+
+
+@router.post("/{event_id}/convert-to-pending", response_model=PendingItemOut, status_code=status.HTTP_201_CREATED)
+def convert_management_event_to_pending(
+    event_id: int,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    event_service = ManagementEventService(db)
+    event = event_service.get_event(event_id)
+    if not event:
+        raise HTTPException(status_code=404, detail="Management event not found")
+    item = PendingItemService(db).create_from_management_event(event, user)
+    return pending_item_to_out(item)

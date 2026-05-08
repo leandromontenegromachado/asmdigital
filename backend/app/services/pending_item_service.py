@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 from sqlalchemy import func
 from sqlalchemy.orm import Session, joinedload
 
-from app.models import Employee, PendingItem, PendingItemEvent, User
+from app.models import Employee, ManagementEvent, PendingItem, PendingItemEvent, User
 from app.schemas.pending_items import PendingItemCreate, PendingItemUpdate
 
 
@@ -45,6 +45,47 @@ class PendingItemService:
         self.db.add(item)
         self.db.flush()
         self._add_event(item, "created", None, item.status, None, actor)
+        self.db.commit()
+        self.db.refresh(item)
+        return item
+
+    def create_from_management_event(self, event: ManagementEvent, actor: User) -> PendingItem:
+        responsible = event.responsible if isinstance(event.responsible, Employee) else None
+        payload = {
+            **(event.payload_json or {}),
+            "management_event": {
+                "id": event.id,
+                "event_type": event.event_type,
+                "source_type": event.source_type,
+                "source_id": event.source_id,
+                "severity": event.severity,
+                "employee_id": event.responsible_id,
+                "manager_id": responsible.manager_id if responsible else None,
+            },
+        }
+        item = PendingItem(
+            title=event.title,
+            description=event.description,
+            status="open",
+            priority=event.severity or "medium",
+            source_type=event.source_type,
+            source_id=event.source_id,
+            management_event_id=event.id,
+            responsible_id=event.responsible_id,
+            created_by=actor.id,
+            payload_json=payload,
+        )
+        self.db.add(item)
+        self.db.flush()
+        self._add_event(
+            item,
+            "created_from_management_event",
+            None,
+            item.status,
+            f"Pendencia criada a partir do evento gerencial #{event.id}.",
+            actor,
+        )
+        event.status = "converted_to_pending"
         self.db.commit()
         self.db.refresh(item)
         return item
