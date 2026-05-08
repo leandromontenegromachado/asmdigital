@@ -3,6 +3,7 @@ import { AuthProvider } from './auth';
 import { RequireAuth } from './RequireAuth';
 import LoginPage from '../pages/LoginPage';
 import DashboardPage from '../pages/DashboardPage';
+import ExecutiveDashboardPage from '../pages/ExecutiveDashboardPage';
 import ConnectorsPage from '../pages/ConnectorsPage';
 import ReportsRedminePage from '../pages/ReportsRedminePage';
 import AzureBoardsPage from '../pages/AzureBoardsPage';
@@ -31,6 +32,7 @@ export const router = createBrowserRouter([
     children: [
       { index: true, element: <DashboardPage /> },
       { path: 'dashboard', element: <DashboardPage /> },
+      { path: 'executive-dashboard', element: <ExecutiveDashboardPage /> },
       { path: 'connectors', element: <ConnectorsPage /> },
       { path: 'reports/redmine-deliveries', element: <ReportsRedminePage /> },
       { path: 'reports/azure-boards', element: <AzureBoardsPage /> },
