@@ -172,6 +172,52 @@ class ManagementEvent(Base):
     creator = relationship("User")
 
 
+class PendingItem(Base):
+    __tablename__ = "pending_items"
+
+    id = Column(Integer, primary_key=True, index=True)
+    title = Column(String(200), nullable=False)
+    description = Column(Text, nullable=True)
+    status = Column(String(40), nullable=False, default="open", index=True)
+    priority = Column(String(40), nullable=False, default="medium", index=True)
+    source_type = Column(String(80), nullable=True, index=True)
+    source_id = Column(String(120), nullable=True, index=True)
+    management_event_id = Column(Integer, ForeignKey("management_events.id"), nullable=True, index=True)
+    responsible_id = Column(Integer, ForeignKey("employees.id"), nullable=True, index=True)
+    created_by = Column(Integer, ForeignKey("users.id"), nullable=True, index=True)
+    due_date = Column(Date, nullable=True, index=True)
+    payload_json = Column(JSONB, nullable=False, default=dict)
+    resolved_at = Column(DateTime(timezone=True), nullable=True)
+    ignored_at = Column(DateTime(timezone=True), nullable=True)
+    escalated_at = Column(DateTime(timezone=True), nullable=True)
+    reopened_at = Column(DateTime(timezone=True), nullable=True)
+    resolution_note = Column(Text, nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
+
+    management_event = relationship("ManagementEvent")
+    responsible = relationship("Employee")
+    creator = relationship("User")
+    events = relationship("PendingItemEvent", back_populates="pending_item", cascade="all, delete-orphan")
+
+
+class PendingItemEvent(Base):
+    __tablename__ = "pending_item_events"
+
+    id = Column(Integer, primary_key=True, index=True)
+    pending_item_id = Column(Integer, ForeignKey("pending_items.id"), nullable=False, index=True)
+    event_type = Column(String(60), nullable=False, index=True)
+    old_status = Column(String(40), nullable=True)
+    new_status = Column(String(40), nullable=True)
+    note = Column(Text, nullable=True)
+    actor_id = Column(Integer, ForeignKey("users.id"), nullable=True, index=True)
+    payload_json = Column(JSONB, nullable=False, default=dict)
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+    pending_item = relationship("PendingItem", back_populates="events")
+    actor = relationship("User")
+
+
 class NotificationTemplate(Base):
     __tablename__ = "notification_templates"
 
