@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import logging
+import json
 import re
 import unicodedata
 from datetime import date, datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 from typing import Any
 
+import httpx
 from apscheduler.schedulers.base import BaseScheduler
 from apscheduler.triggers.cron import CronTrigger
 from apscheduler.triggers.date import DateTrigger
@@ -107,6 +109,24 @@ DEFAULT_REDMINE_COLUMNS = [
     {"key": "updated_on", "label": "Alterado em"},
     {"key": "status", "label": "Status"},
 ]
+
+PROMPT_FIELD_LABELS = {key: label for key, label, _ in PROMPT_COLUMN_CANDIDATES}
+PROMPT_FIELD_LABELS["source_ref"] = "ID"
+PROMPT_ALLOWED_FIELDS = set(PROMPT_FIELD_LABELS) | {"created_on"}
+PROMPT_ALLOWED_OPERATORS = {
+    "eq",
+    "neq",
+    "gt",
+    "gte",
+    "lt",
+    "lte",
+    "contains",
+    "not_contains",
+    "in",
+    "not_in",
+    "is_empty",
+    "is_not_empty",
+}
 
 
 def _prompt_columns(prompt: str) -> list[dict[str, str]]:
@@ -287,6 +307,199 @@ def _parse_excluded_status_names(prompt: str) -> list[str]:
     return result
 
 
+def _extract_json_object(text: str) -> str:
+    value = (text or "").strip()
+    if value.startswith("```"):
+        value = value.strip("`").strip()
+        if value.lower().startswith("json"):
+            value = value[4:].strip()
+    if value.startswith("{") and value.endswith("}"):
+        return value
+    start = value.find("{")
+    end = value.rfind("}")
+    if start >= 0 and end > start:
+        return value[start:end + 1]
+    return value
+
+
+def _build_prompt_interpreter_request(prompt: str, defaults: dict[str, Any], connector: Connector | None) -> str:
+    connector_projects = _default_project_ids(connector) if connector else []
+    fields = {
+        "source_ref": "ID da demanda",
+        "subject": "titulo/assunto",
+        "assigned_to": "responsavel/atribuido para",
+        "due_date": "data prevista",
+        "days_overdue": "dias em atraso calculado",
+        "updated_on": "alterado em",
+        "created_on": "criado em",
+        "status": "status/situacao",
+        "priority": "prioridade",
+        "tracker": "tipo/tracker",
+        "author": "autor/solicitante",
+        "done_ratio": "percentual concluido",
+        "cliente": "cliente normalizado",
+        "sistema": "sistema normalizado",
+        "entrega": "entrega normalizada",
+    }
+    contract = {
+        "project_ids": ["asm-dem"],
+        "query_id": None,
+        "status_id": "open | closed | null",
+        "start_date": "YYYY-MM-DD ou null",
+        "end_date": "YYYY-MM-DD ou null",
+        "use_saved_query": False,
+        "columns": [{"key": "subject", "label": "Titulo"}],
+        "filters": [{"field": "status", "operator": "not_in", "values": ["Homologacao"]}],
+        "sort": [{"field": "days_overdue", "direction": "desc"}],
+        "overdue_only": False,
+        "notes": "texto curto opcional",
+    }
+    return (
+        "Interprete o prompt de relatorio Redmine e retorne somente JSON valido.\n"
+        "Nao execute consulta e nao invente campos fora da lista permitida.\n"
+        "Use datas em ISO YYYY-MM-DD. Para hoje use a data atual informada.\n"
+        "Quando o usuario pedir para tirar/remover/nao exibir colunas, retorne columns com a lista final exibida.\n"
+        "Quando o usuario pedir regra de nao exibicao de linhas, retorne em filters.\n"
+        "Operadores permitidos: eq, neq, gt, gte, lt, lte, contains, not_contains, in, not_in, is_empty, is_not_empty.\n"
+        f"Data atual: {date.today().isoformat()}.\n"
+        f"Campos permitidos: {json.dumps(fields, ensure_ascii=False)}.\n"
+        f"Formato esperado: {json.dumps(contract, ensure_ascii=False)}.\n"
+        f"Defaults do template: {json.dumps(_json_safe(defaults), ensure_ascii=False)}.\n"
+        f"Projetos do conector: {json.dumps(connector_projects, ensure_ascii=False)}.\n"
+        f"Prompt do usuario:\n{prompt}"
+    )
+
+
+def _json_safe(value: Any) -> Any:
+    if isinstance(value, (date, datetime)):
+        return value.isoformat()
+    if isinstance(value, dict):
+        return {str(key): _json_safe(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_json_safe(item) for item in value]
+    return value
+
+
+def _call_prompt_interpreter_ai(prompt: str, defaults: dict[str, Any], connector: Connector | None) -> dict[str, Any] | None:
+    if not settings.fala_ai_gemini_api_key:
+        return None
+    response = httpx.post(
+        f"https://generativelanguage.googleapis.com/v1beta/models/{settings.fala_ai_gemini_model}:generateContent",
+        headers={"x-goog-api-key": settings.fala_ai_gemini_api_key},
+        json={
+            "system_instruction": {
+                "parts": [
+                    {
+                        "text": (
+                            "Voce converte prompts de relatorios Redmine em JSON estruturado. "
+                            "Retorne somente JSON valido, sem markdown."
+                        )
+                    }
+                ]
+            },
+            "contents": [{"parts": [{"text": _build_prompt_interpreter_request(prompt, defaults, connector)}]}],
+            "generationConfig": {
+                "temperature": 0.0,
+                "maxOutputTokens": 2500,
+                "responseMimeType": "application/json",
+            },
+        },
+        timeout=settings.fala_ai_gemini_timeout_seconds,
+    )
+    response.raise_for_status()
+    data = response.json()
+    text = (
+        (data.get("candidates") or [{}])[0]
+        .get("content", {})
+        .get("parts", [{}])[0]
+        .get("text", "")
+    )
+    return json.loads(_extract_json_object(text))
+
+
+def _normalize_prompt_plan(raw_plan: dict[str, Any]) -> dict[str, Any]:
+    plan: dict[str, Any] = {}
+    if isinstance(raw_plan.get("project_ids"), list):
+        plan["project_ids"] = _normalize_project_ids(raw_plan.get("project_ids"))
+    if raw_plan.get("query_id") not in (None, "", "-", "null"):
+        plan["query_id"] = str(raw_plan.get("query_id"))
+    if raw_plan.get("status_id") in ("open", "closed", None):
+        plan["status_id"] = raw_plan.get("status_id")
+    for key in ("start_date", "end_date"):
+        parsed = _parse_date_token(str(raw_plan.get(key))) if raw_plan.get(key) else None
+        if parsed:
+            plan[key] = parsed
+    if isinstance(raw_plan.get("use_saved_query"), bool):
+        plan["use_saved_query"] = raw_plan["use_saved_query"]
+    columns = []
+    if isinstance(raw_plan.get("columns"), list):
+        for item in raw_plan["columns"]:
+            key = item.get("key") if isinstance(item, dict) else item
+            field = _field_from_prompt_label(str(key))
+            if field in PROMPT_ALLOWED_FIELDS:
+                columns.append({"key": field, "label": PROMPT_FIELD_LABELS.get(field, str(field))})
+    if columns:
+        plan["columns"] = list({item["key"]: item for item in columns}.values())
+    filters = []
+    if isinstance(raw_plan.get("filters"), list):
+        for item in raw_plan["filters"]:
+            if not isinstance(item, dict):
+                continue
+            field = _field_from_prompt_label(str(item.get("field") or ""))
+            operator = str(item.get("operator") or "eq").lower().strip()
+            if field not in PROMPT_ALLOWED_FIELDS or operator not in PROMPT_ALLOWED_OPERATORS:
+                continue
+            rule = {"field": field, "operator": operator}
+            if isinstance(item.get("values"), list):
+                rule["values"] = [value for value in item["values"] if value not in (None, "")]
+            elif item.get("value") not in (None, ""):
+                rule["value"] = item.get("value")
+            filters.append(rule)
+    if filters:
+        plan["filters"] = filters
+    sort = []
+    if isinstance(raw_plan.get("sort"), list):
+        for item in raw_plan["sort"]:
+            if not isinstance(item, dict):
+                continue
+            field = _field_from_prompt_label(str(item.get("field") or ""))
+            direction = str(item.get("direction") or "asc").lower()
+            if field in PROMPT_ALLOWED_FIELDS and direction in {"asc", "desc"}:
+                sort.append({"field": field, "direction": direction})
+    if sort:
+        plan["sort"] = sort
+    if isinstance(raw_plan.get("overdue_only"), bool):
+        plan["overdue_only"] = raw_plan["overdue_only"]
+    return plan
+
+
+def _apply_prompt_plan(output: dict[str, Any], plan: dict[str, Any]) -> dict[str, Any]:
+    for key in ("project_ids", "query_id", "status_id", "start_date", "end_date"):
+        if key in plan:
+            output[key] = plan[key]
+    prompt_options = dict(output.get("prompt_options") or {})
+    if plan.get("overdue_only"):
+        prompt_options["overdue_only"] = True
+        prompt_options["sort_overdue_first"] = True
+    if plan.get("columns"):
+        prompt_options["columns"] = plan["columns"]
+    if plan.get("filters"):
+        prompt_options["prompt_filters"] = plan["filters"]
+        excluded = [
+            {"field": rule["field"], "operator": rule["operator"], "values": rule.get("values", [rule.get("value")])}
+            for rule in plan["filters"]
+            if rule.get("operator") in {"neq", "not_in"}
+        ]
+        if excluded:
+            prompt_options["exclude_field_values"] = excluded
+    if plan.get("sort"):
+        prompt_options["sort"] = plan["sort"]
+    if plan.get("use_saved_query"):
+        prompt_options["use_saved_query"] = True
+    output["prompt_options"] = prompt_options
+    return output
+
+
 def _select_saved_query(connector: Connector, project_ids: list[str], prompt: str) -> str | None:
     base_url = (connector.config_json or {}).get("base_url")
     api_key = (connector.config_json or {}).get("api_key")
@@ -316,7 +529,7 @@ def _default_date_range() -> tuple[date, date]:
     return end_date.replace(day=1), end_date
 
 
-def _parse_prompt_filters(prompt: str, defaults: dict[str, Any]) -> dict[str, Any]:
+def _parse_prompt_filters(prompt: str, defaults: dict[str, Any], connector: Connector | None = None) -> dict[str, Any]:
     output = {
         "project_ids": _normalize_project_ids(defaults.get("project_ids", [])),
         "status_id": defaults.get("status_id"),
@@ -404,6 +617,29 @@ def _parse_prompt_filters(prompt: str, defaults: dict[str, Any]) -> dict[str, An
         **output["prompt_options"],
         "columns": _prompt_columns(prompt),
     }
+
+    try:
+        raw_plan = _call_prompt_interpreter_ai(prompt, defaults, connector)
+        if raw_plan:
+            plan = _normalize_prompt_plan(raw_plan)
+            output = _apply_prompt_plan(output, plan)
+            output["prompt_options"] = {
+                **output["prompt_options"],
+                "interpreter": "gemini",
+                "interpreter_model": settings.fala_ai_gemini_model,
+            }
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("prompt_interpreter_ai_failed", extra={"error": str(exc)})
+        output["prompt_options"] = {
+            **output["prompt_options"],
+            "interpreter": "fallback",
+            "interpreter_error": str(exc),
+        }
+    else:
+        output["prompt_options"] = {
+            **output["prompt_options"],
+            "interpreter": output["prompt_options"].get("interpreter", "fallback"),
+        }
 
     return output
 
@@ -506,14 +742,20 @@ def run_prompt_report_template(
     if not effective_prompt:
         raise ValueError("Prompt is required")
 
-    filters = _parse_prompt_filters(effective_prompt, template.params_json or {})
+    filters = _parse_prompt_filters(effective_prompt, template.params_json or {}, connector=connector)
     if not filters["project_ids"]:
         filters["project_ids"] = _default_project_ids(connector)
-    if not filters["query_id"] and _should_use_saved_query(effective_prompt):
+    if not filters["query_id"] and (
+        _should_use_saved_query(effective_prompt)
+        or (filters.get("prompt_options") or {}).get("use_saved_query")
+    ):
         filters["query_id"] = _select_saved_query(connector, filters["project_ids"], effective_prompt)
         if not filters["query_id"]:
             logger.info("saved_query_not_selected_falling_back_to_project_filters", extra={"template_id": template.id})
-    if filters["query_id"] and _should_use_saved_query(effective_prompt):
+    if filters["query_id"] and (
+        _should_use_saved_query(effective_prompt)
+        or (filters.get("prompt_options") or {}).get("use_saved_query")
+    ):
         filters["prompt_options"] = {
             **(filters.get("prompt_options") or {}),
             "saved_query_scope": True,

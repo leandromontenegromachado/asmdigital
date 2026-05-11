@@ -291,6 +291,8 @@ def generate_redmine_report(
 
     if prompt_options and prompt_options.get("sort_overdue_first"):
         rows.sort(key=_report_row_sort_key)
+    elif prompt_options and prompt_options.get("sort"):
+        rows.sort(key=lambda row: _prompt_sort_key(row, prompt_options.get("sort")))
 
     db.add_all(rows)
     db.commit()
@@ -323,6 +325,8 @@ def _issues_to_report_rows(
         metadata = _issue_report_metadata(issue)
         if prompt_options and prompt_options.get("overdue_only") and not _is_overdue(issue):
             continue
+        if prompt_options and _is_rejected_by_prompt_filters(metadata, prompt_options.get("prompt_filters")):
+            continue
         if prompt_options and _is_excluded_by_prompt_rules(metadata, prompt_options.get("exclude_field_values")):
             continue
         if prompt_options and _is_excluded_status(issue, prompt_options.get("exclude_status_names")):
@@ -331,6 +335,8 @@ def _issues_to_report_rows(
         options = normalization_rules.get("options", {})
         dictionary = normalization_rules.get("dictionary", normalization_rules)
         normalized = _apply_normalization(extracted, dictionary, options, regex_rules)
+        if prompt_options and _is_rejected_by_prompt_filters({**metadata, **normalized}, prompt_options.get("prompt_filters")):
+            continue
         if prompt_options and _is_excluded_by_prompt_rules({**metadata, **normalized}, prompt_options.get("exclude_field_values")):
             continue
         rows.append(
@@ -433,6 +439,103 @@ def _is_excluded_by_prompt_rules(metadata: dict[str, Any], rules: Any) -> bool:
     return False
 
 
+def _rule_values(rule: dict[str, Any]) -> list[Any]:
+    if isinstance(rule.get("values"), list):
+        return [value for value in rule["values"] if value not in (None, "")]
+    if rule.get("value") not in (None, ""):
+        return [rule.get("value")]
+    return []
+
+
+def _as_number(value: Any) -> float | None:
+    try:
+        return float(str(value).replace(",", "."))
+    except (TypeError, ValueError):
+        return None
+
+
+def _as_date(value: Any) -> date | None:
+    if isinstance(value, date):
+        return value
+    text = str(value or "").strip().lower()
+    if text in {"today", "hoje"}:
+        return date.today()
+    return _parse_redmine_date(text)
+
+
+def _compare_values(actual: Any, expected: Any, operator: str) -> bool:
+    actual_text = _normalize_filter_text(actual)
+    expected_text = _normalize_filter_text(expected)
+    if operator in {"eq", "neq", "contains", "not_contains", "in", "not_in"}:
+        if operator == "eq":
+            return actual_text == expected_text
+        if operator == "neq":
+            return actual_text != expected_text
+        if operator == "contains":
+            return bool(expected_text and expected_text in actual_text)
+        if operator == "not_contains":
+            return not expected_text or expected_text not in actual_text
+        if operator == "in":
+            return actual_text == expected_text
+        if operator == "not_in":
+            return actual_text != expected_text
+
+    actual_number = _as_number(actual)
+    expected_number = _as_number(expected)
+    if actual_number is not None and expected_number is not None:
+        if operator == "gt":
+            return actual_number > expected_number
+        if operator == "gte":
+            return actual_number >= expected_number
+        if operator == "lt":
+            return actual_number < expected_number
+        if operator == "lte":
+            return actual_number <= expected_number
+
+    actual_date = _as_date(actual)
+    expected_date = _as_date(expected)
+    if actual_date and expected_date:
+        if operator == "gt":
+            return actual_date > expected_date
+        if operator == "gte":
+            return actual_date >= expected_date
+        if operator == "lt":
+            return actual_date < expected_date
+        if operator == "lte":
+            return actual_date <= expected_date
+    return False
+
+
+def _rule_matches(metadata: dict[str, Any], rule: dict[str, Any]) -> bool | None:
+    field = str(rule.get("field") or "").strip()
+    operator = str(rule.get("operator") or "eq").strip().lower()
+    if not field or field not in metadata:
+        return None
+    actual = metadata.get(field)
+    if operator == "is_empty":
+        return actual in (None, "")
+    if operator == "is_not_empty":
+        return actual not in (None, "")
+    values = _rule_values(rule)
+    if not values:
+        return True
+    if operator in {"neq", "not_contains", "not_in"}:
+        return all(_compare_values(actual, value, operator) for value in values)
+    return any(_compare_values(actual, value, operator) for value in values)
+
+
+def _is_rejected_by_prompt_filters(metadata: dict[str, Any], rules: Any) -> bool:
+    if not isinstance(rules, list):
+        return False
+    for rule in rules:
+        if not isinstance(rule, dict):
+            continue
+        matched = _rule_matches(metadata, rule)
+        if matched is False:
+            return True
+    return False
+
+
 def _is_closed(issue: dict[str, Any]) -> bool:
     status = issue.get("status")
     if isinstance(status, dict):
@@ -469,6 +572,38 @@ def _report_row_sort_key(row: ReportRow) -> tuple[int, str, str]:
     raw = row.raw_json or {}
     due_date = str(raw.get("due_date") or "9999-12-31")
     return (0 if raw.get("is_overdue") else 1, due_date, row.source_ref or "")
+
+
+def _prompt_sort_key(row: ReportRow, sort_rules: Any) -> tuple[Any, ...]:
+    raw = row.raw_json or {}
+    context = {
+        **raw,
+        "cliente": row.cliente,
+        "sistema": row.sistema,
+        "entrega": row.entrega,
+        "source_ref": row.source_ref,
+    }
+    if not isinstance(sort_rules, list):
+        return (row.source_ref or "",)
+    values: list[Any] = []
+    for rule in sort_rules:
+        if not isinstance(rule, dict):
+            continue
+        field = str(rule.get("field") or "").strip()
+        value = context.get(field)
+        number = _as_number(value)
+        parsed_date = _as_date(value)
+        comparable: Any = number if number is not None else parsed_date or _normalize_filter_text(value)
+        if str(rule.get("direction") or "asc").lower() == "desc":
+            if isinstance(comparable, (int, float)):
+                comparable = -comparable
+            elif isinstance(comparable, date):
+                comparable = date.max - (comparable - date.min)
+            else:
+                comparable = "".join(chr(255 - ord(char)) for char in str(comparable))
+        values.append(comparable)
+    values.append(row.source_ref or "")
+    return tuple(values)
 
 
 def _extract_by_order_with_source(issue: dict[str, Any], mapping_rules: dict[str, Any]) -> list[tuple[str, dict[str, str | None]]]:
