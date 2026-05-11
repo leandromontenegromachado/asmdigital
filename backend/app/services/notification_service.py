@@ -140,6 +140,27 @@ def retry_notification(db: Session, notification: Notification, *, simulation: b
     return notification
 
 
+def approve_notification(db: Session, notification: Notification, *, simulation: bool = False) -> Notification:
+    if notification.status != NOTIFICATION_PENDING_APPROVAL:
+        return notification
+    notification.status = NOTIFICATION_PENDING
+    notification.error = None
+    _dispatch_notification(notification, simulation=simulation)
+    db.commit()
+    db.refresh(notification)
+    return notification
+
+
+def cancel_notification(db: Session, notification: Notification, reason: str | None = None) -> Notification:
+    if notification.status in {NOTIFICATION_SENT, NOTIFICATION_SIMULATED}:
+        return notification
+    notification.status = NOTIFICATION_CANCELLED
+    notification.error = reason or "Envio cancelado manualmente."
+    db.commit()
+    db.refresh(notification)
+    return notification
+
+
 def _reprocess_failed_notification(db: Session, notification: Notification, *, simulation: bool) -> bool:
     if notification.employee_id or notification.recipient:
         return False

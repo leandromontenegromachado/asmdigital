@@ -14,7 +14,7 @@ from app.schemas.notifications import (
     NotificationTemplateOut,
     NotificationTemplateUpdate,
 )
-from app.services.notification_service import retry_notification
+from app.services.notification_service import approve_notification, cancel_notification, retry_notification
 
 router = APIRouter(tags=["notifications"])
 
@@ -200,5 +200,45 @@ def retry_notification_endpoint(notification_id: int, db: Session = Depends(get_
     old = {"status": notification.status, "attempts": notification.attempts, "error": notification.error}
     notification = retry_notification(db, notification)
     _audit(db, user, "RETRY_NOTIFICATION", "notifications", notification.id, old, {"status": notification.status, "attempts": notification.attempts, "error": notification.error})
+    db.commit()
+    return NotificationRetryOut(id=notification.id, status=notification.status, error=notification.error, attempts=notification.attempts)
+
+
+@router.post("/notifications/{notification_id}/approve", response_model=NotificationRetryOut)
+def approve_notification_endpoint(notification_id: int, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    notification = db.query(Notification).filter(Notification.id == notification_id).first()
+    if not notification:
+        raise HTTPException(status_code=404, detail="Notification not found")
+    old = {"status": notification.status, "attempts": notification.attempts, "error": notification.error}
+    notification = approve_notification(db, notification)
+    _audit(
+        db,
+        user,
+        "APPROVE_NOTIFICATION",
+        "notifications",
+        notification.id,
+        old,
+        {"status": notification.status, "attempts": notification.attempts, "error": notification.error},
+    )
+    db.commit()
+    return NotificationRetryOut(id=notification.id, status=notification.status, error=notification.error, attempts=notification.attempts)
+
+
+@router.post("/notifications/{notification_id}/cancel", response_model=NotificationRetryOut)
+def cancel_notification_endpoint(notification_id: int, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    notification = db.query(Notification).filter(Notification.id == notification_id).first()
+    if not notification:
+        raise HTTPException(status_code=404, detail="Notification not found")
+    old = {"status": notification.status, "attempts": notification.attempts, "error": notification.error}
+    notification = cancel_notification(db, notification)
+    _audit(
+        db,
+        user,
+        "CANCEL_NOTIFICATION",
+        "notifications",
+        notification.id,
+        old,
+        {"status": notification.status, "attempts": notification.attempts, "error": notification.error},
+    )
     db.commit()
     return NotificationRetryOut(id=notification.id, status=notification.status, error=notification.error, attempts=notification.attempts)

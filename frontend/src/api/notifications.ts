@@ -81,3 +81,9 @@ export const listNotifications = async (params?: { execution_id?: number; automa
 
 export const retryNotification = async (id: number) =>
   (await api.post(`/notifications/${id}/retry`)).data;
+
+export const approveNotification = async (id: number) =>
+  (await api.post(`/notifications/${id}/approve`)).data;
+
+export const cancelNotification = async (id: number) =>
+  (await api.post(`/notifications/${id}/cancel`)).data;

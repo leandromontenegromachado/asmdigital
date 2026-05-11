@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { Copy, Plus, RefreshCw, Save, Send, Trash2 } from 'lucide-react';
+import { CheckCircle2, Copy, Plus, RefreshCw, Save, Send, Trash2, XCircle } from 'lucide-react';
 import { AppShell } from '../components/AppShell';
 import { Topbar } from '../components/Topbar';
 import { Automation, listAutomations } from '../api/automations';
@@ -7,6 +7,8 @@ import {
   NotificationHistory,
   NotificationRule,
   NotificationTemplate,
+  approveNotification,
+  cancelNotification,
   createNotificationRule,
   createNotificationTemplate,
   deleteNotificationRule,
@@ -236,8 +238,33 @@ const NotificationsPage: React.FC = () => {
   };
 
   const retry = async (id: number) => {
-    await retryNotification(id);
-    await load();
+    setError(null);
+    try {
+      await retryNotification(id);
+      await load();
+    } catch {
+      setError('Falha ao reenviar notificacao.');
+    }
+  };
+
+  const approve = async (id: number) => {
+    setError(null);
+    try {
+      await approveNotification(id);
+      await load();
+    } catch {
+      setError('Falha ao aprovar envio.');
+    }
+  };
+
+  const cancel = async (id: number) => {
+    setError(null);
+    try {
+      await cancelNotification(id);
+      await load();
+    } catch {
+      setError('Falha ao cancelar envio.');
+    }
   };
 
   return (
@@ -266,6 +293,10 @@ const NotificationsPage: React.FC = () => {
           <div className="rounded-lg border border-slate-200 bg-white px-4 py-3 shadow-sm">
             <p className="text-xs font-bold uppercase text-slate-400">Historico</p>
             <p className="text-2xl font-black text-slate-900">{history.length}</p>
+          </div>
+          <div className="rounded-lg border border-blue-200 bg-blue-50 px-4 py-3 shadow-sm">
+            <p className="text-xs font-bold uppercase text-blue-500">Aguardando aprovacao</p>
+            <p className="text-2xl font-black text-blue-900">{history.filter((item) => item.status === 'aguardando_aprovacao').length}</p>
           </div>
         </div>
         <button
@@ -559,6 +590,18 @@ const NotificationsPage: React.FC = () => {
                     </div>
                   </td>
                   <td className="px-4 py-3">
+                    {item.status === 'aguardando_aprovacao' && (
+                      <div className="flex flex-wrap gap-2">
+                        <button onClick={() => approve(item.id)} className="inline-flex items-center gap-1 font-semibold text-emerald-700">
+                          <CheckCircle2 className="h-4 w-4" />
+                          Aprovar envio
+                        </button>
+                        <button onClick={() => cancel(item.id)} className="inline-flex items-center gap-1 font-semibold text-red-700">
+                          <XCircle className="h-4 w-4" />
+                          Cancelar
+                        </button>
+                      </div>
+                    )}
                     {item.status === 'erro' && (
                       <button onClick={() => retry(item.id)} className="inline-flex items-center gap-1 font-semibold text-cyan-700">
                         <Send className="h-4 w-4" />

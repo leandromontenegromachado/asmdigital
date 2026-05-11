@@ -1,5 +1,17 @@
 from app.models import Automation, AutomationRun, Employee, Notification, NotificationRule, Report, ReportRow
-from app.services.notification_service import NOTIFICATION_ERROR, _employee_by_name, _employee_from_item, _item_from_notification, _normalize_lookup_text, _resolve_recipients, retry_notification, render_template
+from app.services.notification_service import (
+    NOTIFICATION_ERROR,
+    NOTIFICATION_PENDING_APPROVAL,
+    approve_notification,
+    cancel_notification,
+    _employee_by_name,
+    _employee_from_item,
+    _item_from_notification,
+    _normalize_lookup_text,
+    _resolve_recipients,
+    retry_notification,
+    render_template,
+)
 
 
 def test_render_template_replaces_known_variables():
@@ -343,3 +355,49 @@ def test_employee_lookup_scans_text_when_responsible_key_is_unknown():
     }
 
     assert _employee_from_item(FakeDb(), item) is employee
+
+
+def test_approve_notification_dispatches_pending_approval():
+    notification = Notification(
+        id=1,
+        channel="email",
+        recipient="leandro@example.com",
+        subject="Teste",
+        message="Mensagem",
+        status=NOTIFICATION_PENDING_APPROVAL,
+        attempts=0,
+        simulation=True,
+    )
+
+    class FakeDb:
+        def commit(self):
+            return None
+
+        def refresh(self, _obj):
+            return None
+
+    approve_notification(FakeDb(), notification)
+
+    assert notification.status == "simulado"
+    assert notification.attempts == 1
+
+
+def test_cancel_notification_marks_pending_approval_as_cancelled():
+    notification = Notification(
+        id=1,
+        channel="email",
+        status=NOTIFICATION_PENDING_APPROVAL,
+        attempts=0,
+    )
+
+    class FakeDb:
+        def commit(self):
+            return None
+
+        def refresh(self, _obj):
+            return None
+
+    cancel_notification(FakeDb(), notification)
+
+    assert notification.status == "cancelado"
+    assert notification.error == "Envio cancelado manualmente."
