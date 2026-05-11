@@ -318,7 +318,11 @@ def create_employee(payload: EmployeeCreate, db: Session = Depends(get_db), admi
     db.add(employee)
     db.flush()
     _audit(db, admin, "CREATE_EMPLOYEE", "employees", employee.id, None, payload.model_dump(mode="json"))
-    db.commit()
+    try:
+        db.commit()
+    except IntegrityError as exc:
+        db.rollback()
+        raise HTTPException(status_code=400, detail="Nao foi possivel salvar: email ou matricula ja cadastrado") from exc
     db.refresh(employee)
     return _employee_out(employee)
 
@@ -350,7 +354,11 @@ def update_employee(employee_id: int, payload: EmployeeUpdate, db: Session = Dep
     if "cargo" in data and "position" not in data:
         employee.position = data["cargo"]
     _audit(db, admin, "UPDATE_EMPLOYEE", "employees", employee.id, old, data)
-    db.commit()
+    try:
+        db.commit()
+    except IntegrityError as exc:
+        db.rollback()
+        raise HTTPException(status_code=400, detail="Nao foi possivel salvar: email ou matricula ja cadastrado") from exc
     db.refresh(employee)
     return _employee_out(employee)
 
