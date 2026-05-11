@@ -356,7 +356,8 @@ def _name_similarity(left: str, right: str) -> float:
     ratio = SequenceMatcher(None, left, right).ratio()
     compact_ratio = SequenceMatcher(None, left.replace(" ", ""), right.replace(" ", "")).ratio()
     token_ratio = _token_similarity(left, right)
-    return max(ratio, compact_ratio, token_ratio)
+    containment_ratio = _token_containment_similarity(left, right)
+    return max(ratio, compact_ratio, token_ratio, containment_ratio)
 
 
 def _token_similarity(left: str, right: str) -> float:
@@ -367,6 +368,16 @@ def _token_similarity(left: str, right: str) -> float:
     intersection = len(left_tokens & right_tokens)
     union = len(left_tokens | right_tokens)
     return intersection / union
+
+
+def _token_containment_similarity(left: str, right: str) -> float:
+    left_tokens = set(left.split())
+    right_tokens = set(right.split())
+    min_token_count = min(len(left_tokens), len(right_tokens))
+    if min_token_count < 2:
+        return 0.0
+    intersection = len(left_tokens & right_tokens)
+    return intersection / min_token_count
 
 
 def _recipient_reference_from_item(item: dict[str, Any]) -> str | None:
