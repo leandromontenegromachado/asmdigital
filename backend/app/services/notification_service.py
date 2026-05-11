@@ -4,6 +4,8 @@ import logging
 import re
 import smtplib
 import unicodedata
+import ast
+import json
 from abc import ABC, abstractmethod
 from datetime import datetime, timezone
 from difflib import SequenceMatcher
@@ -124,10 +126,87 @@ def send_notifications_for_automation_run(db: Session, automation: Automation, r
 def retry_notification(db: Session, notification: Notification, *, simulation: bool = False) -> Notification:
     if notification.status == NOTIFICATION_CANCELLED:
         return notification
+    if notification.status == NOTIFICATION_ERROR:
+        reprocessed = _reprocess_failed_notification(db, notification, simulation=simulation)
+        if reprocessed:
+            db.commit()
+            db.refresh(notification)
+            return notification
+        notification.status = NOTIFICATION_PENDING
+        notification.error = None
     _dispatch_notification(notification, simulation=simulation)
     db.commit()
     db.refresh(notification)
     return notification
+
+
+def _reprocess_failed_notification(db: Session, notification: Notification, *, simulation: bool) -> bool:
+    if notification.employee_id or notification.recipient:
+        return False
+    if not notification.automation_id:
+        return False
+
+    item = _item_from_notification(notification)
+    if not item:
+        return False
+
+    automation = notification.automation or db.query(Automation).filter(Automation.id == notification.automation_id).first()
+    run = notification.execution if notification.execution_id else None
+    if not automation:
+        return False
+
+    rules = (
+        db.query(NotificationRule)
+        .filter(NotificationRule.automation_id == notification.automation_id, NotificationRule.is_active.is_(True))
+        .order_by(NotificationRule.id.asc())
+        .all()
+    )
+    for rule in rules:
+        employees = _resolve_recipients(db, rule, item)
+        if not employees:
+            continue
+        template = rule.template if rule.template and rule.template.is_active else None
+        rebuilt = _build_notification(db, automation, run or notification.execution, rule, template, employees[0], item, simulation=simulation)
+        notification.employee_id = rebuilt.employee_id
+        notification.channel = rebuilt.channel
+        notification.recipient = rebuilt.recipient
+        notification.to_ref = rebuilt.to_ref
+        notification.subject = rebuilt.subject
+        notification.message = rebuilt.message
+        notification.body = rebuilt.body
+        notification.status = rebuilt.status
+        notification.error = rebuilt.error
+        notification.simulation = rebuilt.simulation
+        if rule.requires_approval:
+            notification.status = NOTIFICATION_PENDING_APPROVAL
+        else:
+            _dispatch_notification(notification, simulation=simulation)
+        return True
+
+    target = _recipient_reference_from_item(item)
+    notification.error = f"Funcionario destinatario nao encontrado: {target}." if target else "Funcionario destinatario nao encontrado."
+    notification.attempts = (notification.attempts or 0) + 1
+    return True
+
+
+def _item_from_notification(notification: Notification) -> dict[str, Any] | None:
+    for raw in (notification.message, notification.body):
+        if not raw:
+            continue
+        text = raw.strip()
+        try:
+            parsed = json.loads(text)
+            if isinstance(parsed, dict):
+                return parsed
+        except json.JSONDecodeError:
+            pass
+        try:
+            parsed = ast.literal_eval(text)
+            if isinstance(parsed, dict):
+                return parsed
+        except (SyntaxError, ValueError):
+            pass
+    return None
 
 
 def _notifications_for_item(
@@ -162,7 +241,7 @@ def _notifications_for_item(
 def _build_notification(
     db: Session,
     automation: Automation,
-    run: AutomationRun,
+    run: AutomationRun | None,
     rule: NotificationRule,
     template: NotificationTemplate | None,
     employee: Employee,
@@ -457,7 +536,7 @@ def _items_from_report(db: Session, report: Report) -> list[dict[str, Any]]:
     return items
 
 
-def _template_variables(automation: Automation, run: AutomationRun, employee: Employee, item: dict[str, Any]) -> dict[str, Any]:
+def _template_variables(automation: Automation, run: AutomationRun | None, employee: Employee, item: dict[str, Any]) -> dict[str, Any]:
     variables = dict(item)
     variables.update(
         {
@@ -466,9 +545,9 @@ def _template_variables(automation: Automation, run: AutomationRun, employee: Em
             "email": employee.email,
             "nome_rotina": automation.name,
             "rotina_id": automation.id,
-            "execucao_id": run.id,
-            "data_execucao": run.started_at.date().isoformat() if run.started_at else "",
-            "link_relatorio": item.get("link_relatorio") or f"{settings.app_public_url}/routines?run_id={run.id}",
+            "execucao_id": run.id if run else "",
+            "data_execucao": run.started_at.date().isoformat() if run and run.started_at else "",
+            "link_relatorio": item.get("link_relatorio") or (f"{settings.app_public_url}/routines?run_id={run.id}" if run else settings.app_public_url),
             "nome_projeto": item.get("projeto") or item.get("project") or item.get("entrega") or "",
         }
     )
