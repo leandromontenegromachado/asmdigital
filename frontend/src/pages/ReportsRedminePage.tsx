@@ -343,6 +343,9 @@ const ReportsRedminePage: React.FC = () => {
     tracker: { key: 'tipo', label: 'Tipo' },
     author: { key: 'autor', label: 'Autor' },
     done_ratio: { key: 'percentual_concluido', label: '% concluido' },
+    cliente: { key: 'cliente', label: 'Cliente' },
+    sistema: { key: 'sistema', label: 'Sistema' },
+    entrega: { key: 'entrega', label: 'Entrega' },
   };
   const promptColumns = Array.isArray(report?.report.params_json?.prompt_options?.columns)
     ? report?.report.params_json?.prompt_options?.columns

@@ -320,7 +320,10 @@ def _issues_to_report_rows(
 ) -> list[ReportRow]:
     rows: list[ReportRow] = []
     for issue in issues:
+        metadata = _issue_report_metadata(issue)
         if prompt_options and prompt_options.get("overdue_only") and not _is_overdue(issue):
+            continue
+        if prompt_options and _is_excluded_by_prompt_rules(metadata, prompt_options.get("exclude_field_values")):
             continue
         if prompt_options and _is_excluded_status(issue, prompt_options.get("exclude_status_names")):
             continue
@@ -328,6 +331,8 @@ def _issues_to_report_rows(
         options = normalization_rules.get("options", {})
         dictionary = normalization_rules.get("dictionary", normalization_rules)
         normalized = _apply_normalization(extracted, dictionary, options, regex_rules)
+        if prompt_options and _is_excluded_by_prompt_rules({**metadata, **normalized}, prompt_options.get("exclude_field_values")):
+            continue
         rows.append(
             ReportRow(
                 report_id=report_id,
@@ -336,7 +341,7 @@ def _issues_to_report_rows(
                 entrega=normalized.get("entrega"),
                 source_ref=str(issue.get("id")) if issue.get("id") else None,
                 source_url=_issue_url(connector.config_json.get("base_url"), issue.get("id")),
-                raw_json=_issue_report_metadata(issue),
+                raw_json=metadata,
             )
         )
     return rows
@@ -406,6 +411,28 @@ def _is_excluded_status(issue: dict[str, Any], excluded_status_names: Any) -> bo
     return bool(status_name and status_name in excluded)
 
 
+def _is_excluded_by_prompt_rules(metadata: dict[str, Any], rules: Any) -> bool:
+    if not isinstance(rules, list):
+        return False
+    for rule in rules:
+        if not isinstance(rule, dict):
+            continue
+        field = str(rule.get("field") or "").strip()
+        operator = str(rule.get("operator") or "neq").strip().lower()
+        values = rule.get("values")
+        if not field or not isinstance(values, list):
+            continue
+        actual = _normalize_filter_text(metadata.get(field))
+        expected = [_normalize_filter_text(value) for value in values if str(value).strip()]
+        if not actual or not expected:
+            continue
+        if operator in {"neq", "not_eq", "not_in"} and actual in expected:
+            return True
+        if operator == "not_contains" and any(value in actual for value in expected):
+            return True
+    return False
+
+
 def _is_closed(issue: dict[str, Any]) -> bool:
     status = issue.get("status")
     if isinstance(status, dict):
@@ -422,6 +449,7 @@ def _issue_report_metadata(issue: dict[str, Any]) -> dict[str, Any]:
     due_date = _parse_redmine_date(issue.get("due_date"))
     days_overdue = (date.today() - due_date).days if due_date and due_date < date.today() else 0
     return {
+        "source_ref": str(issue.get("id")) if issue.get("id") else None,
         "subject": issue.get("subject"),
         "tracker": _nested_name(issue, "tracker"),
         "status": _nested_name(issue, "status"),

@@ -83,8 +83,35 @@ def _should_use_saved_query(prompt: str) -> bool:
     return "consulta salva" in lowered or "query salva" in lowered or "queries salvas" in lowered
 
 
+PROMPT_COLUMN_CANDIDATES = [
+    ("subject", "Titulo", ("titulo", "título", "assunto", "demanda")),
+    ("assigned_to", "Atribuido para", ("atribuido", "atribuído", "responsavel", "responsável")),
+    ("due_date", "Data prevista", ("data prevista", "prevista", "vencimento")),
+    ("days_overdue", "Dias em atraso", ("dias em atraso", "dias atraso", "dias vencido", "dias vencidos")),
+    ("updated_on", "Alterado em", ("alterado", "atualizado", "modificado")),
+    ("status", "Status", ("status", "situacao", "situação")),
+    ("priority", "Prioridade", ("prioridade",)),
+    ("tracker", "Tipo", ("tipo", "tracker")),
+    ("author", "Autor", ("autor", "solicitante")),
+    ("done_ratio", "% concluido", ("concluido", "concluído", "percentual", "%")),
+    ("cliente", "Cliente", ("cliente",)),
+    ("sistema", "Sistema", ("sistema",)),
+    ("entrega", "Entrega", ("entrega",)),
+]
+
+DEFAULT_REDMINE_COLUMNS = [
+    {"key": "source_ref", "label": "ID"},
+    {"key": "subject", "label": "Titulo"},
+    {"key": "assigned_to", "label": "Atribuido para"},
+    {"key": "due_date", "label": "Data prevista"},
+    {"key": "updated_on", "label": "Alterado em"},
+    {"key": "status", "label": "Status"},
+]
+
+
 def _prompt_columns(prompt: str) -> list[dict[str, str]]:
     lowered = prompt.lower()
+    excluded_columns = set(_parse_excluded_columns(prompt))
     candidates = [
         ("subject", "Titulo", ("titulo", "título", "assunto", "demanda")),
         ("assigned_to", "Atribuido para", ("atribuido", "atribuído", "responsavel", "responsável")),
@@ -98,8 +125,8 @@ def _prompt_columns(prompt: str) -> list[dict[str, str]]:
         ("done_ratio", "% concluido", ("concluido", "concluído", "percentual", "%")),
     ]
     matched_columns: list[dict[str, str]] = []
-    for key, label, terms in candidates:
-        if any(term in lowered for term in terms):
+    for key, label, terms in PROMPT_COLUMN_CANDIDATES:
+        if key not in excluded_columns and any(term in lowered for term in terms):
             matched_columns.append({"key": key, "label": label})
 
     concrete_fields = [item for item in matched_columns if item["key"] != "subject"]
@@ -114,14 +141,22 @@ def _prompt_columns(prompt: str) -> list[dict[str, str]]:
             "devera ter",
             "adicionar",
             "acrescentar",
+            "incluir",
+            "tirar",
+            "remover",
+            "nao exibir",
+            "não exibir",
         )
     )
-    if not has_explicit_column_request and not concrete_fields:
+    if not has_explicit_column_request and not concrete_fields and not excluded_columns:
         return []
+
+    if excluded_columns and not matched_columns:
+        return [column for column in DEFAULT_REDMINE_COLUMNS if column["key"] not in excluded_columns]
 
     columns: list[dict[str, str]] = [{"key": "source_ref", "label": "ID"}]
     columns.extend(matched_columns)
-    if not any(item["key"] == "subject" for item in columns):
+    if "subject" not in excluded_columns and not any(item["key"] == "subject" for item in columns):
         columns.append({"key": "subject", "label": "Titulo"})
     return columns
 
@@ -139,7 +174,13 @@ def _normalize_prompt_text(value: str) -> str:
 
 def _split_prompt_list(value: str) -> list[str]:
     value = re.split(
-        r"\s+(?:com|adicionar|acrescentar|colocar|incluir|dias?\s+em\s+atraso|colunas?|campos?|orden|periodo|projetos?|query)\b",
+        r"\s+(?:,|;|\be\b)\s+(?:status(?:es)?|prioridade|tipo|tracker|autor|solicitante|responsavel|responsável|atribuido(?:\s+para)?|atribuído(?:\s+para)?|titulo|título|assunto|demanda|cliente|sistema|entrega)\s+(?:diferente|nao|não|exceto|menos)\b",
+        value,
+        maxsplit=1,
+        flags=re.IGNORECASE,
+    )[0]
+    value = re.split(
+        r"\s+(?:com|adicionar|acrescentar|colocar|incluir|tirar|remover|excluir|ocultar|nao\s+exibir|não\s+exibir|dias?\s+em\s+atraso|colunas?|campos?|orden|periodo|projetos?|query)\b",
         value,
         maxsplit=1,
         flags=re.IGNORECASE,
@@ -147,6 +188,80 @@ def _split_prompt_list(value: str) -> list[str]:
     parts = re.split(r"\s*(?:,|;|/|\bou\b|\be\b)\s*", value, flags=re.IGNORECASE)
     ignored = {"", "status", "de", "do", "da", "dos", "das", "que", "seja", "for", "esteja"}
     return [part.strip(" .:-").strip() for part in parts if part.strip(" .:-").strip().lower() not in ignored]
+
+
+def _field_from_prompt_label(value: str) -> str | None:
+    normalized = _normalize_prompt_text(value).strip()
+    aliases = {
+        "source_ref": ("id", "numero", "número", "codigo", "código"),
+        "subject": ("titulo", "título", "assunto", "demanda"),
+        "assigned_to": ("atribuido", "atribuído", "atribuido para", "responsavel", "responsável"),
+        "due_date": ("data prevista", "prevista", "vencimento"),
+        "days_overdue": ("dias em atraso", "dias atraso", "dias vencido", "dias vencidos"),
+        "updated_on": ("alterado", "atualizado", "modificado"),
+        "status": ("status", "situacao", "situação"),
+        "priority": ("prioridade",),
+        "tracker": ("tipo", "tracker"),
+        "author": ("autor", "solicitante"),
+        "done_ratio": ("concluido", "concluído", "percentual", "%"),
+        "cliente": ("cliente",),
+        "sistema": ("sistema",),
+        "entrega": ("entrega",),
+    }
+    for field, terms in aliases.items():
+        if normalized == field or any(normalized == _normalize_prompt_text(term) for term in terms):
+            return field
+    for field, _, terms in PROMPT_COLUMN_CANDIDATES:
+        if any(_normalize_prompt_text(term) in normalized for term in terms):
+            return field
+    return None
+
+
+def _parse_excluded_columns(prompt: str) -> list[str]:
+    normalized = _normalize_prompt_text(prompt)
+    patterns = [
+        r"(?:nao|não)\s+(?:exibir|mostrar|listar)\s+(?:a\s+)?(?:coluna|campo)?s?\s*([^\r\n.]+)",
+        r"(?:tirar|remover|excluir|ocultar)\s+(?:a\s+)?(?:coluna|campo)?s?\s*([^\r\n.]+)",
+        r"(?:sem)\s+(?:a\s+)?(?:coluna|campo)?s?\s*([^\r\n.]+)",
+    ]
+    excluded: list[str] = []
+    for pattern in patterns:
+        for match in re.finditer(pattern, normalized, flags=re.IGNORECASE):
+            raw_value = match.group(1).strip()
+            for item in _split_prompt_list(raw_value) or [raw_value]:
+                field = _field_from_prompt_label(item)
+                if field:
+                    excluded.append(field)
+    return list(dict.fromkeys(excluded))
+
+
+def _parse_excluded_field_values(prompt: str) -> list[dict[str, Any]]:
+    normalized = _normalize_prompt_text(prompt)
+    field_pattern = (
+        r"status(?:es)?|prioridade|tipo|tracker|autor|solicitante|responsavel|responsável|"
+        r"atribuido(?:\s+para)?|atribuído(?:\s+para)?|titulo|título|assunto|demanda|"
+        r"cliente|sistema|entrega"
+    )
+    next_rule = rf"(?=\s+(?:,|;|\be\b)\s+(?:{field_pattern})\s+(?:diferente|nao|não|exceto|menos)|[\r\n.]|$)"
+    patterns = [
+        rf"(?P<field>{field_pattern})\s+(?:diferente(?:s)?\s+de|nao\s+(?:seja|sejam|for|esteja|estejam)|"
+        rf"não\s+(?:seja|sejam|for|esteja|estejam)|exceto|menos)\s+(?P<values>.*?){next_rule}",
+        rf"(?:exceto|excluir|exclua|remover|remova|sem)\s+(?P<field>{field_pattern})\s+(?P<values>.*?){next_rule}",
+    ]
+    rules: list[dict[str, Any]] = []
+    seen: set[tuple[str, tuple[str, ...]]] = set()
+    for pattern in patterns:
+        for match in re.finditer(pattern, normalized, flags=re.IGNORECASE):
+            field = _field_from_prompt_label(match.group("field"))
+            values = _split_prompt_list(match.group("values"))
+            if not field or not values:
+                continue
+            normalized_values = tuple(dict.fromkeys(_normalize_prompt_text(item) for item in values if item.strip()))
+            key = (field, normalized_values)
+            if normalized_values and key not in seen:
+                seen.add(key)
+                rules.append({"field": field, "operator": "neq", "values": list(values)})
+    return rules
 
 
 def _parse_excluded_status_names(prompt: str) -> list[str]:
@@ -267,12 +382,23 @@ def _parse_prompt_filters(prompt: str, defaults: dict[str, Any]) -> dict[str, An
             "sort_overdue_first": True,
         }
 
-    excluded_status_names = _parse_excluded_status_names(prompt)
-    if excluded_status_names:
+    excluded_field_values = _parse_excluded_field_values(prompt)
+    if excluded_field_values:
         output["prompt_options"] = {
             **output["prompt_options"],
-            "exclude_status_names": excluded_status_names,
+            "exclude_field_values": excluded_field_values,
         }
+        excluded_status_names = [
+            value
+            for rule in excluded_field_values
+            if rule.get("field") == "status"
+            for value in rule.get("values", [])
+        ]
+        if excluded_status_names:
+            output["prompt_options"] = {
+                **output["prompt_options"],
+                "exclude_status_names": excluded_status_names,
+            }
 
     output["prompt_options"] = {
         **output["prompt_options"],
