@@ -380,23 +380,38 @@ def _resolve_recipients(db: Session, rule: NotificationRule, item: dict[str, Any
 
 
 def _employee_from_item(db: Session, item: dict[str, Any]) -> Employee | None:
-    employee_id = _first_value(item, ["responsavel_id", "employee_id", "funcionario_id", "assigned_to_id"])
+    employee_id = _first_value(item, ["responsavel_id", "employee_id", "funcionario_id", "assigned_to_id", "assignedToId"])
     if employee_id:
         try:
             return db.query(Employee).filter(Employee.id == int(employee_id)).first()
         except (TypeError, ValueError):
             pass
 
-    email = _first_value(item, ["responsavel_email", "email", "assigned_to_email"])
+    email = _first_value(item, ["responsavel_email", "email", "assigned_to_email", "assignedToEmail"])
     if email:
         employee = db.query(Employee).filter(Employee.email.ilike(str(email).strip())).first()
         if employee:
             return employee
 
-    name = _first_value(item, ["responsavel_nome", "nome_responsavel", "assigned_to", "responsavel"])
+    name = _first_value(
+        item,
+        [
+            "responsavel_nome",
+            "nome_responsavel",
+            "assigned_to",
+            "assignedTo",
+            "responsavel",
+            "atribuido_para",
+            "atribuído_para",
+            "Atribuido para",
+            "Atribuído para",
+        ],
+    )
     if name:
-        return _employee_by_name(db, name)
-    return None
+        employee = _employee_by_name(db, name)
+        if employee:
+            return employee
+    return _employee_by_any_text(db, item)
 
 
 def _employee_by_name(db: Session, name: Any) -> Employee | None:
@@ -457,6 +472,37 @@ def _employee_by_fuzzy_name(employees: list[Employee], normalized_name: str) -> 
     return best_employee
 
 
+def _employee_by_any_text(db: Session, item: dict[str, Any]) -> Employee | None:
+    text = _flatten_text(item)
+    if not text:
+        return None
+    normalized_text = _normalize_lookup_text(text)
+    scored: list[tuple[float, Employee]] = []
+    for employee in db.query(Employee).all():
+        employee_name = _normalize_lookup_text(employee.name)
+        if not employee_name:
+            continue
+        if employee_name in normalized_text:
+            scored.append((1.0, employee))
+            continue
+        score = _name_similarity(normalized_text, employee_name)
+        if score >= FUZZY_NAME_MIN_SCORE:
+            scored.append((score, employee))
+    if not scored:
+        return None
+    scored.sort(key=lambda item: item[0], reverse=True)
+    best_score, best_employee = scored[0]
+    second_score = scored[1][0] if len(scored) > 1 else 0.0
+    if best_score - second_score < FUZZY_NAME_MIN_GAP:
+        logger.warning(
+            "ambiguous_employee_text_match",
+            extra={"employee_id": best_employee.id, "best_score": best_score, "second_score": second_score},
+        )
+        return None
+    logger.info("employee_text_match", extra={"employee_id": best_employee.id, "score": best_score})
+    return best_employee
+
+
 def _name_similarity(left: str, right: str) -> float:
     if not left or not right:
         return 0.0
@@ -487,6 +533,27 @@ def _token_containment_similarity(left: str, right: str) -> float:
     return intersection / min_token_count
 
 
+def _flatten_text(value: Any) -> str:
+    parts: list[str] = []
+
+    def visit(item: Any) -> None:
+        if item is None:
+            return
+        if isinstance(item, dict):
+            for key, nested_value in item.items():
+                parts.append(str(key))
+                visit(nested_value)
+            return
+        if isinstance(item, list):
+            for nested_value in item:
+                visit(nested_value)
+            return
+        parts.append(str(item))
+
+    visit(value)
+    return " ".join(parts)
+
+
 def _recipient_reference_from_item(item: dict[str, Any]) -> str | None:
     value = _first_value(
         item,
@@ -494,14 +561,21 @@ def _recipient_reference_from_item(item: dict[str, Any]) -> str | None:
             "responsavel_nome",
             "nome_responsavel",
             "assigned_to",
+            "assignedTo",
             "responsavel",
+            "atribuido_para",
+            "atribuído_para",
+            "Atribuido para",
+            "Atribuído para",
             "responsavel_email",
             "email",
             "assigned_to_email",
+            "assignedToEmail",
             "responsavel_id",
             "employee_id",
             "funcionario_id",
             "assigned_to_id",
+            "assignedToId",
         ],
     )
     return _collapse_spaces(value) or None

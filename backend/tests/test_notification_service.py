@@ -1,5 +1,5 @@
 from app.models import Automation, AutomationRun, Employee, Notification, NotificationRule, Report, ReportRow
-from app.services.notification_service import NOTIFICATION_ERROR, _employee_by_name, _item_from_notification, _normalize_lookup_text, _resolve_recipients, retry_notification, render_template
+from app.services.notification_service import NOTIFICATION_ERROR, _employee_by_name, _employee_from_item, _item_from_notification, _normalize_lookup_text, _resolve_recipients, retry_notification, render_template
 
 
 def test_render_template_replaces_known_variables():
@@ -315,3 +315,31 @@ def test_fixed_employee_rule_without_employee_falls_back_to_responsible():
             return EmployeeQuery()
 
     assert _resolve_recipients(FakeDb(), rule, {"assigned_to": "Leandro Montenegro Machado"}) == [employee]
+
+
+def test_employee_lookup_scans_text_when_responsible_key_is_unknown():
+    employee = Employee(id=1, name="Leandro Montenegro Machado", email="leandro@example.com")
+
+    class EmployeeQuery:
+        def filter(self, *_args, **_kwargs):
+            return self
+
+        def first(self):
+            return None
+
+        def all(self):
+            return [employee]
+
+    class FakeDb:
+        def query(self, model):
+            assert model is Employee
+            return EmployeeQuery()
+
+    item = {
+        "columns": [
+            {"label": "Titulo", "value": "Demanda teste"},
+            {"label": "Atribuído para", "value": "Leandro Montenegro Machado"},
+        ]
+    }
+
+    assert _employee_from_item(FakeDb(), item) is employee
