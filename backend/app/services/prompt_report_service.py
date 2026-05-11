@@ -267,6 +267,7 @@ def _parse_excluded_field_values(prompt: str) -> list[dict[str, Any]]:
         rf"(?P<field>{field_pattern})\s+(?:diferente(?:s)?\s+de|nao\s+(?:seja|sejam|for|esteja|estejam)|"
         rf"não\s+(?:seja|sejam|for|esteja|estejam)|exceto|menos)\s+(?P<values>.*?){next_rule}",
         rf"(?:exceto|excluir|exclua|remover|remova|sem)\s+(?P<field>{field_pattern})\s+(?P<values>.*?){next_rule}",
+        rf"(?:nao|não)\s+(?:trazer|listar|mostrar|exibir|incluir|retornar)\s+.*?(?P<field>{field_pattern})\s+(?:de|=|:)?\s*(?P<values>.*?){next_rule}",
     ]
     rules: list[dict[str, Any]] = []
     seen: set[tuple[str, tuple[str, ...]]] = set()
@@ -360,6 +361,8 @@ def _build_prompt_interpreter_request(prompt: str, defaults: dict[str, Any], con
         "Use datas em ISO YYYY-MM-DD. Para hoje use a data atual informada.\n"
         "Quando o usuario pedir para tirar/remover/nao exibir colunas, retorne columns com a lista final exibida.\n"
         "Quando o usuario pedir regra de nao exibicao de linhas, retorne em filters.\n"
+        "Exemplo: 'nao trazer demandas com status de homologada e homologacao' deve virar "
+        "{\"field\":\"status\",\"operator\":\"not_in\",\"values\":[\"homologada\",\"homologacao\"]}.\n"
         "Operadores permitidos: eq, neq, gt, gte, lt, lte, contains, not_contains, in, not_in, is_empty, is_not_empty.\n"
         f"Data atual: {date.today().isoformat()}.\n"
         f"Campos permitidos: {json.dumps(fields, ensure_ascii=False)}.\n"

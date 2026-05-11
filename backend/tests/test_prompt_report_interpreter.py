@@ -1,6 +1,6 @@
 from datetime import date, timedelta
 
-from app.services.prompt_report_service import _apply_prompt_plan, _normalize_prompt_plan
+from app.services.prompt_report_service import _apply_prompt_plan, _normalize_prompt_plan, _parse_prompt_filters
 from app.services.report_service import _is_rejected_by_prompt_filters
 
 
@@ -52,3 +52,19 @@ def test_prompt_filters_compare_dates_against_today():
 
     assert not _is_rejected_by_prompt_filters({"due_date": yesterday}, rules)
     assert _is_rejected_by_prompt_filters({"due_date": tomorrow}, rules)
+
+
+def test_fallback_parser_understands_do_not_bring_status_phrase(monkeypatch):
+    monkeypatch.setattr("app.services.prompt_report_service.settings.fala_ai_gemini_api_key", None)
+    prompt = (
+        "Quero um relatorio que liste demandas em atraso, adicionar dias em atraso "
+        "e nao trazer demandas com status de homologada e homologacao"
+    )
+
+    options = _parse_prompt_filters(prompt, {})["prompt_options"]
+
+    assert {"field": "status", "operator": "neq", "values": ["homologada", "homologacao"]} in options["exclude_field_values"]
+    assert _is_rejected_by_prompt_filters(
+        {"status": "Homologacao"},
+        [{"field": "status", "operator": "not_in", "values": ["homologada", "homologacao"]}],
+    )
