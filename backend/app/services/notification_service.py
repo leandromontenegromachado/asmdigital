@@ -146,13 +146,15 @@ def _reprocess_failed_notification(db: Session, notification: Notification, *, s
     if not notification.automation_id:
         return False
 
-    item = _item_from_notification(notification)
-    if not item:
-        return False
-
     automation = notification.automation or db.query(Automation).filter(Automation.id == notification.automation_id).first()
     run = notification.execution if notification.execution_id else None
+    if not run and notification.execution_id:
+        run = db.query(AutomationRun).filter(AutomationRun.id == notification.execution_id).first()
     if not automation:
+        return False
+
+    items = _items_from_notification_context(db, notification, run)
+    if not items:
         return False
 
     rules = (
@@ -162,31 +164,41 @@ def _reprocess_failed_notification(db: Session, notification: Notification, *, s
         .all()
     )
     for rule in rules:
-        employees = _resolve_recipients(db, rule, item)
-        if not employees:
-            continue
-        template = rule.template if rule.template and rule.template.is_active else None
-        rebuilt = _build_notification(db, automation, run or notification.execution, rule, template, employees[0], item, simulation=simulation)
-        notification.employee_id = rebuilt.employee_id
-        notification.channel = rebuilt.channel
-        notification.recipient = rebuilt.recipient
-        notification.to_ref = rebuilt.to_ref
-        notification.subject = rebuilt.subject
-        notification.message = rebuilt.message
-        notification.body = rebuilt.body
-        notification.status = rebuilt.status
-        notification.error = rebuilt.error
-        notification.simulation = rebuilt.simulation
-        if rule.requires_approval:
-            notification.status = NOTIFICATION_PENDING_APPROVAL
-        else:
-            _dispatch_notification(notification, simulation=simulation)
-        return True
+        for item in items:
+            employees = _resolve_recipients(db, rule, item)
+            if not employees:
+                continue
+            template = rule.template if rule.template and rule.template.is_active else None
+            rebuilt = _build_notification(db, automation, run, rule, template, employees[0], item, simulation=simulation)
+            notification.employee_id = rebuilt.employee_id
+            notification.channel = rebuilt.channel
+            notification.recipient = rebuilt.recipient
+            notification.to_ref = rebuilt.to_ref
+            notification.subject = rebuilt.subject
+            notification.message = rebuilt.message
+            notification.body = rebuilt.body
+            notification.status = rebuilt.status
+            notification.error = rebuilt.error
+            notification.simulation = rebuilt.simulation
+            if rule.requires_approval:
+                notification.status = NOTIFICATION_PENDING_APPROVAL
+            else:
+                _dispatch_notification(notification, simulation=simulation)
+            return True
 
-    target = _recipient_reference_from_item(item)
+    target = next((_recipient_reference_from_item(item) for item in items if _recipient_reference_from_item(item)), None)
     notification.error = f"Funcionario destinatario nao encontrado: {target}." if target else "Funcionario destinatario nao encontrado."
     notification.attempts = (notification.attempts or 0) + 1
     return True
+
+
+def _items_from_notification_context(db: Session, notification: Notification, run: AutomationRun | None) -> list[dict[str, Any]]:
+    item = _item_from_notification(notification)
+    if item:
+        return [item]
+    if run:
+        return _structured_items_from_run(db, run)
+    return []
 
 
 def _item_from_notification(notification: Notification) -> dict[str, Any] | None:
