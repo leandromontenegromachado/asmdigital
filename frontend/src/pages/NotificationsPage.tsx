@@ -47,6 +47,20 @@ const channelLabel: Record<string, string> = {
   internal: 'Interna',
 };
 
+const statusStyles: Record<string, string> = {
+  enviado: 'bg-emerald-100 text-emerald-700',
+  simulado: 'bg-amber-100 text-amber-700',
+  erro: 'bg-red-100 text-red-700',
+  pendente: 'bg-slate-100 text-slate-700',
+  aguardando_aprovacao: 'bg-blue-100 text-blue-700',
+  cancelado: 'bg-slate-200 text-slate-600',
+};
+
+const formatDateTime = (value?: string | null) => {
+  if (!value) return '-';
+  return new Date(value).toLocaleString('pt-BR');
+};
+
 const NotificationsPage: React.FC = () => {
   const [automations, setAutomations] = useState<Automation[]>([]);
   const [templates, setTemplates] = useState<NotificationTemplate[]>([]);
@@ -517,7 +531,8 @@ const NotificationsPage: React.FC = () => {
                 <th className="px-4 py-3 text-left">Funcionario</th>
                 <th className="px-4 py-3 text-left">Canal</th>
                 <th className="px-4 py-3 text-left">Status</th>
-                <th className="px-4 py-3 text-left">Erro</th>
+                <th className="px-4 py-3 text-left">Enviado em</th>
+                <th className="px-4 py-3 text-left">Assunto / mensagem</th>
                 <th className="px-4 py-3 text-left">Acao</th>
               </tr>
             </thead>
@@ -530,8 +545,19 @@ const NotificationsPage: React.FC = () => {
                     <div className="text-xs text-slate-500">{item.recipient || '-'}</div>
                   </td>
                   <td className="px-4 py-3">{channelLabel[item.channel] || item.channel}</td>
-                  <td className="px-4 py-3">{item.status}</td>
-                  <td className="max-w-md px-4 py-3 text-red-600">{item.error || '-'}</td>
+                  <td className="px-4 py-3">
+                    <span className={`rounded-full px-2 py-1 text-xs font-bold ${statusStyles[item.status] || 'bg-slate-100 text-slate-700'}`}>
+                      {item.status}
+                    </span>
+                    {item.simulation && <div className="mt-1 text-xs text-amber-700">simulacao</div>}
+                  </td>
+                  <td className="px-4 py-3">{formatDateTime(item.sent_at || item.data_envio)}</td>
+                  <td className="max-w-xl px-4 py-3">
+                    <div className="font-semibold text-slate-800">{item.subject || '-'}</div>
+                    <div className={`mt-1 line-clamp-2 text-xs ${item.status === 'erro' || item.status === 'simulado' ? 'text-red-600' : 'text-slate-500'}`}>
+                      {item.error || item.message || '-'}
+                    </div>
+                  </td>
                   <td className="px-4 py-3">
                     {item.status === 'erro' && (
                       <button onClick={() => retry(item.id)} className="inline-flex items-center gap-1 font-semibold text-cyan-700">

@@ -17,8 +17,9 @@ from sqlalchemy.orm import Session
 from app.core.config import settings
 from app.adapters.redmine import RedmineAdapter
 from app.db.session import SessionLocal
-from app.models import Connector, PromptReportTemplate, Report
+from app.models import Automation, AutomationRun, Connector, PromptReportTemplate, Report
 from app.services.management_event_service import register_management_event_safe
+from app.services.notification_service import send_notifications_for_automation_run
 from app.services.report_service import generate_redmine_report
 
 logger = logging.getLogger(__name__)
@@ -817,7 +818,63 @@ def run_prompt_report_template(
             },
         },
     )
+    if not trigger.startswith("automation:"):
+        _send_prompt_report_notifications(db, template, report, trigger)
     return report, filters
+
+
+def _send_prompt_report_notifications(db: Session, template: PromptReportTemplate, report: Report, trigger: str) -> None:
+    automation = db.query(Automation).filter(Automation.key == f"prompt_report_template_{template.id}").first()
+    if not automation:
+        return
+
+    run = AutomationRun(
+        automation_id=automation.id,
+        status="success" if report.status == "completed" else report.status,
+        summary_json={
+            "message": f"Relatorio #{report.id} gerado",
+            "items": 1,
+            "tasks": [f"prompt_report:{template.id}"],
+            "trigger": trigger,
+            "results": [
+                {
+                    "index": 1,
+                    "task": f"prompt_report:{template.id}",
+                    "action": "prompt_report",
+                    "status": "success" if report.status in {"completed", "completed_with_errors"} else "failed",
+                    "message": f"Relatorio #{report.id} gerado",
+                    "data": {
+                        "template_id": template.id,
+                        "report_id": report.id,
+                        "report_status": report.status,
+                    },
+                }
+            ],
+        },
+        finished_at=datetime.now(timezone.utc),
+    )
+    db.add(run)
+    db.commit()
+    db.refresh(run)
+
+    try:
+        notifications = send_notifications_for_automation_run(db, automation, run, simulation=False)
+        run.summary_json = {
+            **(run.summary_json or {}),
+            "actionable_notifications": {
+                "total": len(notifications),
+                "sent": len([item for item in notifications if item.status == "enviado"]),
+                "simulated": len([item for item in notifications if item.status == "simulado"]),
+                "errors": len([item for item in notifications if item.status == "erro"]),
+                "pending_approval": len([item for item in notifications if item.status == "aguardando_aprovacao"]),
+            },
+        }
+        db.commit()
+    except Exception as exc:  # noqa: BLE001
+        logger.exception(
+            "prompt_report_notifications_failed",
+            extra={"template_id": template.id, "report_id": report.id, "automation_id": automation.id, "error": str(exc)},
+        )
 
 
 def sync_prompt_report_jobs(db: Session, scheduler: BaseScheduler) -> None:

@@ -20,6 +20,7 @@ NOTIFICATION_SENT = "enviado"
 NOTIFICATION_ERROR = "erro"
 NOTIFICATION_CANCELLED = "cancelado"
 NOTIFICATION_PENDING = "pendente"
+NOTIFICATION_SIMULATED = "simulado"
 
 
 class NotificationProvider(ABC):
@@ -207,12 +208,16 @@ def _dispatch_notification(notification: Notification, *, simulation: bool) -> N
         notification.error = f"Canal nao suportado: {notification.channel}"
         return
     try:
-        provider.send(notification.recipient or "", notification.subject, notification.message or "", simulation=simulation or notification.simulation)
-        notification.status = NOTIFICATION_SENT
+        result = provider.send(notification.recipient or "", notification.subject, notification.message or "", simulation=simulation or notification.simulation)
+        if isinstance(result, dict) and result.get("status") == "simulated":
+            notification.status = NOTIFICATION_SIMULATED
+            notification.error = result.get("reason") or "Envio simulado."
+        else:
+            notification.status = NOTIFICATION_SENT
+            notification.error = None
         now = datetime.now(timezone.utc)
         notification.sent_at = now
         notification.data_envio = now
-        notification.error = None
     except Exception as exc:  # noqa: BLE001
         logger.exception("notification_send_failed", extra={"notification_id": notification.id, "channel": notification.channel})
         notification.status = NOTIFICATION_ERROR

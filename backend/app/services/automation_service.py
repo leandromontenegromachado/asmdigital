@@ -709,6 +709,7 @@ def run_automation(db: Session, automation: Automation, simulation: bool = False
             "status": "processed",
             "total": len(actionable_notifications),
             "sent": len([item for item in actionable_notifications if item.status == "enviado"]),
+            "simulated": len([item for item in actionable_notifications if item.status == "simulado"]),
             "errors": len([item for item in actionable_notifications if item.status == "erro"]),
             "pending_approval": len([item for item in actionable_notifications if item.status == "aguardando_aprovacao"]),
         }
