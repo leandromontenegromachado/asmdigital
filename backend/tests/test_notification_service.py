@@ -33,5 +33,47 @@ def test_employee_lookup_matches_double_spaces_from_report():
     assert _employee_by_name(FakeDb(), "Leandro  Montenegro Machado") is employee
 
 
+def test_employee_lookup_matches_small_typing_difference():
+    employee = Employee(id=1, name="Leandro Montenegro Machado", email="leandro@example.com")
+    other = Employee(id=2, name="Alessandra Martins Nunes", email="alessandra@example.com")
+
+    class FakeQuery:
+        def filter(self, *_args, **_kwargs):
+            return self
+
+        def first(self):
+            return None
+
+        def all(self):
+            return [employee, other]
+
+    class FakeDb:
+        def query(self, *_args, **_kwargs):
+            return FakeQuery()
+
+    assert _employee_by_name(FakeDb(), "Leandro Montenegor Machado") is employee
+
+
+def test_employee_lookup_rejects_ambiguous_fuzzy_match():
+    first = Employee(id=1, name="Maria Silva Santos", email="maria.santos@example.com")
+    second = Employee(id=2, name="Maria Silva Souza", email="maria.souza@example.com")
+
+    class FakeQuery:
+        def filter(self, *_args, **_kwargs):
+            return self
+
+        def first(self):
+            return None
+
+        def all(self):
+            return [first, second]
+
+    class FakeDb:
+        def query(self, *_args, **_kwargs):
+            return FakeQuery()
+
+    assert _employee_by_name(FakeDb(), "Maria Silva") is None
+
+
 def test_employee_lookup_normalizes_accents_and_case():
     assert _normalize_lookup_text("Homologação") == _normalize_lookup_text("homologacao")

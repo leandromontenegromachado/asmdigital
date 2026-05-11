@@ -6,6 +6,7 @@ import smtplib
 import unicodedata
 from abc import ABC, abstractmethod
 from datetime import datetime, timezone
+from difflib import SequenceMatcher
 from email.message import EmailMessage
 from typing import Any
 
@@ -22,6 +23,8 @@ NOTIFICATION_ERROR = "erro"
 NOTIFICATION_CANCELLED = "cancelado"
 NOTIFICATION_PENDING = "pendente"
 NOTIFICATION_SIMULATED = "simulado"
+FUZZY_NAME_MIN_SCORE = 0.88
+FUZZY_NAME_MIN_GAP = 0.04
 
 
 class NotificationProvider(ABC):
@@ -308,9 +311,62 @@ def _employee_by_name(db: Session, name: Any) -> Employee | None:
     for candidate in employees:
         candidate_normalized = _normalize_lookup_text(candidate.name)
         candidate_compact = candidate_normalized.replace(" ", "")
-        if candidate_compact and compact and (candidate_compact == compact or candidate_normalized in normalized or normalized in candidate_normalized):
+        if candidate_compact and compact and candidate_compact == compact:
             return candidate
-    return None
+
+    return _employee_by_fuzzy_name(employees, normalized)
+
+
+def _employee_by_fuzzy_name(employees: list[Employee], normalized_name: str) -> Employee | None:
+    scored: list[tuple[float, Employee]] = []
+    for employee in employees:
+        candidate_name = _normalize_lookup_text(employee.name)
+        score = _name_similarity(normalized_name, candidate_name)
+        if score >= FUZZY_NAME_MIN_SCORE:
+            scored.append((score, employee))
+
+    if not scored:
+        return None
+
+    scored.sort(key=lambda item: item[0], reverse=True)
+    best_score, best_employee = scored[0]
+    second_score = scored[1][0] if len(scored) > 1 else 0.0
+    if best_score - second_score < FUZZY_NAME_MIN_GAP:
+        logger.warning(
+            "ambiguous_employee_name_match",
+            extra={
+                "searched_name": normalized_name,
+                "best_employee_id": best_employee.id,
+                "best_score": best_score,
+                "second_score": second_score,
+            },
+        )
+        return None
+
+    logger.info(
+        "fuzzy_employee_name_match",
+        extra={"searched_name": normalized_name, "employee_id": best_employee.id, "score": best_score},
+    )
+    return best_employee
+
+
+def _name_similarity(left: str, right: str) -> float:
+    if not left or not right:
+        return 0.0
+    ratio = SequenceMatcher(None, left, right).ratio()
+    compact_ratio = SequenceMatcher(None, left.replace(" ", ""), right.replace(" ", "")).ratio()
+    token_ratio = _token_similarity(left, right)
+    return max(ratio, compact_ratio, token_ratio)
+
+
+def _token_similarity(left: str, right: str) -> float:
+    left_tokens = set(left.split())
+    right_tokens = set(right.split())
+    if not left_tokens or not right_tokens:
+        return 0.0
+    intersection = len(left_tokens & right_tokens)
+    union = len(left_tokens | right_tokens)
+    return intersection / union
 
 
 def _recipient_reference_from_item(item: dict[str, Any]) -> str | None:
