@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import re
+import unicodedata
 from datetime import date, datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 from typing import Any
@@ -131,6 +132,46 @@ def _score_query_name(prompt: str, query: dict[str, Any]) -> int:
     return sum(1 for word in prompt_words if word in name)
 
 
+def _normalize_prompt_text(value: str) -> str:
+    normalized = unicodedata.normalize("NFKD", value)
+    return "".join(char for char in normalized if not unicodedata.combining(char)).lower()
+
+
+def _split_prompt_list(value: str) -> list[str]:
+    value = re.split(
+        r"\s+(?:com|adicionar|acrescentar|colocar|incluir|dias?\s+em\s+atraso|colunas?|campos?|orden|periodo|projetos?|query)\b",
+        value,
+        maxsplit=1,
+        flags=re.IGNORECASE,
+    )[0]
+    parts = re.split(r"\s*(?:,|;|/|\bou\b|\be\b)\s*", value, flags=re.IGNORECASE)
+    ignored = {"", "status", "de", "do", "da", "dos", "das", "que", "seja", "for", "esteja"}
+    return [part.strip(" .:-").strip() for part in parts if part.strip(" .:-").strip().lower() not in ignored]
+
+
+def _parse_excluded_status_names(prompt: str) -> list[str]:
+    normalized = _normalize_prompt_text(prompt)
+    patterns = [
+        r"status(?:es)?\s+(?:diferente(?:s)?\s+de|nao\s+(?:seja|sejam|for|esteja|estejam))\s+([^\r\n.]+)",
+        r"(?:exceto|excluir|exclua|remover|remova)\s+status(?:es)?\s+([^\r\n.]+)",
+        r"status(?:es)?\s+(?:exceto|menos)\s+([^\r\n.]+)",
+    ]
+    excluded: list[str] = []
+    for pattern in patterns:
+        match = re.search(pattern, normalized, flags=re.IGNORECASE)
+        if match:
+            excluded.extend(_split_prompt_list(match.group(1)))
+
+    seen = set()
+    result = []
+    for item in excluded:
+        key = _normalize_prompt_text(item)
+        if key and key not in seen:
+            seen.add(key)
+            result.append(item)
+    return result
+
+
 def _select_saved_query(connector: Connector, project_ids: list[str], prompt: str) -> str | None:
     base_url = (connector.config_json or {}).get("base_url")
     api_key = (connector.config_json or {}).get("api_key")
@@ -224,6 +265,13 @@ def _parse_prompt_filters(prompt: str, defaults: dict[str, Any]) -> dict[str, An
             **output["prompt_options"],
             "overdue_only": True,
             "sort_overdue_first": True,
+        }
+
+    excluded_status_names = _parse_excluded_status_names(prompt)
+    if excluded_status_names:
+        output["prompt_options"] = {
+            **output["prompt_options"],
+            "exclude_status_names": excluded_status_names,
         }
 
     output["prompt_options"] = {

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import re
 import time
+import unicodedata
 from datetime import date, datetime
 from typing import Any, Iterable
 
@@ -321,6 +322,8 @@ def _issues_to_report_rows(
     for issue in issues:
         if prompt_options and prompt_options.get("overdue_only") and not _is_overdue(issue):
             continue
+        if prompt_options and _is_excluded_status(issue, prompt_options.get("exclude_status_names")):
+            continue
         extracted = _merge_values(_extract_by_order(issue, mapping_rules))
         options = normalization_rules.get("options", {})
         dictionary = normalization_rules.get("dictionary", normalization_rules)
@@ -387,6 +390,20 @@ def _nested_name(issue: dict[str, Any], key: str) -> str | None:
     if isinstance(value, dict):
         return value.get("name")
     return str(value) if value else None
+
+
+def _normalize_filter_text(value: Any) -> str:
+    text = str(value or "").strip()
+    normalized = unicodedata.normalize("NFKD", text)
+    return "".join(char for char in normalized if not unicodedata.combining(char)).casefold()
+
+
+def _is_excluded_status(issue: dict[str, Any], excluded_status_names: Any) -> bool:
+    if not isinstance(excluded_status_names, list) or not excluded_status_names:
+        return False
+    status_name = _normalize_filter_text(_nested_name(issue, "status"))
+    excluded = {_normalize_filter_text(item) for item in excluded_status_names if str(item).strip()}
+    return bool(status_name and status_name in excluded)
 
 
 def _is_closed(issue: dict[str, Any]) -> bool:
