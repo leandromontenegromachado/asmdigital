@@ -18,6 +18,7 @@ from app.services.prompt_report_service import (
     sync_prompt_report_jobs,
     validate_cron_expression,
 )
+from app.services.automation_service import ensure_prompt_report_automations
 
 router = APIRouter(prefix="/prompt-reports", tags=["prompt-reports"])
 
@@ -45,6 +46,8 @@ def create_prompt_report_template(
     db.add(template)
     db.commit()
     db.refresh(template)
+    ensure_prompt_report_automations(db)
+    db.commit()
     sync_prompt_report_jobs(db, scheduler)
     db.refresh(template)
     return template
@@ -76,6 +79,8 @@ def update_prompt_report_template(
         setattr(template, key, value)
     db.commit()
     db.refresh(template)
+    ensure_prompt_report_automations(db)
+    db.commit()
     sync_prompt_report_jobs(db, scheduler)
     db.refresh(template)
     return template
@@ -91,6 +96,8 @@ def delete_prompt_report_template(
     if not template:
         raise HTTPException(status_code=404, detail="Template not found")
     db.delete(template)
+    db.commit()
+    ensure_prompt_report_automations(db)
     db.commit()
     sync_prompt_report_jobs(db, scheduler)
 

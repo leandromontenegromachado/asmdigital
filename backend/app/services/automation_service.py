@@ -63,7 +63,44 @@ def ensure_default_automations(db: Session) -> None:
                 params_json={"simulation": False, "tasks": default_tasks},
             )
         )
+    ensure_prompt_report_automations(db)
     db.commit()
+
+
+def ensure_prompt_report_automations(db: Session) -> None:
+    templates = db.query(PromptReportTemplate).order_by(PromptReportTemplate.id.asc()).all()
+    valid_keys = {f"prompt_report_template_{template.id}" for template in templates}
+    stale_automations = db.query(Automation).filter(
+        Automation.key.like("prompt_report_template_%"),
+        ~Automation.key.in_(valid_keys) if valid_keys else Automation.key.like("prompt_report_template_%"),
+    ).all()
+    for automation in stale_automations:
+        db.delete(automation)
+    for template in templates:
+        key = f"prompt_report_template_{template.id}"
+        params_json = {
+            "simulation": False,
+            "source": "prompt_report_template",
+            "prompt_report": {"template_id": template.id},
+            "tasks": [f"prompt_report:{template.id}"],
+        }
+        automation = db.query(Automation).filter(Automation.key == key).first()
+        if automation:
+            automation.name = template.name
+            automation.params_json = params_json
+            automation.is_enabled = template.is_enabled
+            automation.schedule_cron = None
+            automation.next_run_at = None
+            continue
+        db.add(
+            Automation(
+                key=key,
+                name=template.name,
+                schedule_cron=None,
+                is_enabled=template.is_enabled,
+                params_json=params_json,
+            )
+        )
 
 
 def validate_cron_expression(cron_expression: str | None) -> None:
