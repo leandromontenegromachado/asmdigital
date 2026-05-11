@@ -1,8 +1,8 @@
 import React, { useEffect, useState } from 'react';
-import { Plus, Save } from 'lucide-react';
+import { Plus, Save, Trash2 } from 'lucide-react';
 import { AppShell } from '../components/AppShell';
 import { Topbar } from '../components/Topbar';
-import { Employee, createEmployee, listEmployees, updateEmployee } from '../api/evaluation';
+import { Employee, createEmployee, deleteEmployee, listEmployees, updateEmployee } from '../api/evaluation';
 
 const emptyForm = {
   name: '',
@@ -92,6 +92,20 @@ const EmployeesPage: React.FC = () => {
     }
   };
 
+  const removeEmployee = async (employee: Employee) => {
+    if (!window.confirm(`Excluir o funcionario ${employee.name}?`)) return;
+    setError(null);
+    try {
+      await deleteEmployee(employee.id);
+      if (editing?.id === employee.id) {
+        openNew();
+      }
+      await load();
+    } catch {
+      setError('Falha ao excluir funcionario. Se houver historico vinculado, desative o cadastro.');
+    }
+  };
+
   return (
     <AppShell>
       <Topbar
@@ -144,7 +158,15 @@ const EmployeesPage: React.FC = () => {
                   <td className="px-4 py-3">{employee.canal_preferencial || 'email'}</td>
                   <td className="px-4 py-3">{employee.manager_name || '-'}</td>
                   <td className="px-4 py-3">{employee.active ? 'Ativo' : 'Inativo'}</td>
-                  <td className="px-4 py-3"><button onClick={() => openEdit(employee)} className="font-semibold text-cyan-700">Editar</button></td>
+                  <td className="px-4 py-3">
+                    <div className="flex flex-wrap gap-3">
+                      <button onClick={() => openEdit(employee)} className="font-semibold text-cyan-700">Editar</button>
+                      <button onClick={() => removeEmployee(employee)} className="inline-flex items-center gap-1 font-semibold text-red-600">
+                        <Trash2 className="h-4 w-4" />
+                        Excluir
+                      </button>
+                    </div>
+                  </td>
                 </tr>
               ))}
             </tbody>

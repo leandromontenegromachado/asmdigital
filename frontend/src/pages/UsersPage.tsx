@@ -4,7 +4,7 @@ import { Topbar } from '../components/Topbar';
 import { Modal } from '../components/Modal';
 import { StateBlock } from '../components/StateBlock';
 import { StatusBadge } from '../components/StatusBadge';
-import { createUser, listUsers, resetUserPassword, updateUser, User } from '../api/users';
+import { createUser, deleteUser, listUsers, resetUserPassword, updateUser, User } from '../api/users';
 
 const defaultForm = {
   name: '',
@@ -103,6 +103,16 @@ const UsersPage: React.FC = () => {
     }
   };
 
+  const handleDelete = async (user: User) => {
+    if (!window.confirm(`Excluir o usuario ${user.email}?`)) return;
+    try {
+      await deleteUser(user.id);
+      await loadUsers(query || undefined);
+    } catch (err) {
+      setError('Erro ao excluir usuario. Se houver historico vinculado, desative o usuario.');
+    }
+  };
+
   return (
     <AppShell>
       <Topbar
@@ -185,6 +195,12 @@ const UsersPage: React.FC = () => {
                       className="rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-bold text-slate-600 hover:bg-slate-50"
                     >
                       {user.is_active ? 'Desativar' : 'Ativar'}
+                    </button>
+                    <button
+                      onClick={() => handleDelete(user)}
+                      className="rounded-lg border border-red-200 px-3 py-1.5 text-xs font-bold text-red-600 hover:bg-red-50"
+                    >
+                      Excluir
                     </button>
                   </td>
                 </tr>

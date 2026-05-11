@@ -243,6 +243,10 @@ export const createEmployee = async (payload: {
 export const updateEmployee = async (id: number, payload: Partial<Employee>) =>
   (await api.put<Employee>(`/employees/${id}`, payload)).data;
 
+export const deleteEmployee = async (id: number) => {
+  await api.delete(`/employees/${id}`);
+};
+
 export const uploadEvaluationCsv = async (cycleId: number, file: File) => {
   const formData = new FormData();
   formData.append('file', file);

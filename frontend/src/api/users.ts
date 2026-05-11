@@ -43,3 +43,7 @@ export const resetUserPassword = async (id: number, password: string) => {
   const { data } = await api.post<User>(`/users/${id}/reset-password`, { password });
   return data;
 };
+
+export const deleteUser = async (id: number) => {
+  await api.delete(`/users/${id}`);
+};

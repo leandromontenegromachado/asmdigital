@@ -3,6 +3,7 @@ from datetime import datetime
 from io import StringIO
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status
+from sqlalchemy.exc import IntegrityError
 from fastapi.responses import HTMLResponse, StreamingResponse
 from sqlalchemy.orm import Session
 
@@ -302,6 +303,13 @@ def list_employees(
 @router.post("/employees", response_model=EmployeeOut, status_code=status.HTTP_201_CREATED)
 def create_employee(payload: EmployeeCreate, db: Session = Depends(get_db), admin: User = Depends(require_admin)):
     data = payload.model_dump()
+    data["email"] = data["email"].strip().lower()
+    if data.get("matricula"):
+        data["matricula"] = str(data["matricula"]).strip() or None
+    if db.query(Employee).filter(Employee.email == data["email"]).first():
+        raise HTTPException(status_code=400, detail="Ja existe funcionario com este email")
+    if data.get("matricula") and db.query(Employee).filter(Employee.matricula == data["matricula"]).first():
+        raise HTTPException(status_code=400, detail="Ja existe funcionario com esta matricula")
     if data.get("setor") and not data.get("department"):
         data["department"] = data["setor"]
     if data.get("cargo") and not data.get("position"):
@@ -324,6 +332,16 @@ def get_employee(employee_id: int, db: Session = Depends(get_db), _admin=Depends
 def update_employee(employee_id: int, payload: EmployeeUpdate, db: Session = Depends(get_db), admin: User = Depends(require_admin)):
     employee = _employee(db, employee_id)
     data = payload.model_dump(exclude_unset=True)
+    if "email" in data and data["email"]:
+        data["email"] = data["email"].strip().lower()
+        if db.query(Employee).filter(Employee.email == data["email"], Employee.id != employee_id).first():
+            raise HTTPException(status_code=400, detail="Ja existe funcionario com este email")
+    if "matricula" in data and data["matricula"]:
+        data["matricula"] = str(data["matricula"]).strip() or None
+        if data["matricula"] and db.query(Employee).filter(Employee.matricula == data["matricula"], Employee.id != employee_id).first():
+            raise HTTPException(status_code=400, detail="Ja existe funcionario com esta matricula")
+    if data.get("manager_id") == employee_id:
+        raise HTTPException(status_code=400, detail="Funcionario nao pode ser gestor dele mesmo")
     old = {key: getattr(employee, key) for key in data}
     for key, value in data.items():
         setattr(employee, key, value)
@@ -335,6 +353,23 @@ def update_employee(employee_id: int, payload: EmployeeUpdate, db: Session = Dep
     db.commit()
     db.refresh(employee)
     return _employee_out(employee)
+
+
+@router.delete("/employees/{employee_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_employee(employee_id: int, db: Session = Depends(get_db), admin: User = Depends(require_admin)):
+    employee = _employee(db, employee_id)
+    _audit(db, admin, "DELETE_EMPLOYEE", "employees", employee.id, {"name": employee.name, "email": employee.email}, None)
+    db.query(Employee).filter(Employee.manager_id == employee_id).update({"manager_id": None})
+    db.delete(employee)
+    try:
+        db.commit()
+    except IntegrityError as exc:
+        db.rollback()
+        raise HTTPException(
+            status_code=409,
+            detail="Nao foi possivel excluir: funcionario possui historico vinculado. Desative o cadastro em vez de excluir.",
+        ) from exc
+    return None
 
 
 @router.post("/evaluation-cycles/{cycle_id}/imports", response_model=EvaluationImportOut, status_code=status.HTTP_201_CREATED)
