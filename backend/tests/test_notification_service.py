@@ -1,4 +1,5 @@
-from app.services.notification_service import render_template
+from app.models import Employee
+from app.services.notification_service import _employee_by_name, _normalize_lookup_text, render_template
 
 
 def test_render_template_replaces_known_variables():
@@ -10,3 +11,27 @@ def test_render_template_replaces_known_variables():
     assert "Maria" in output
     assert "Portal" in output
     assert "{{" not in output
+
+
+def test_employee_lookup_matches_double_spaces_from_report():
+    employee = Employee(id=1, name="Leandro Montenegro Machado", email="leandro@example.com")
+
+    class FakeQuery:
+        def filter(self, *_args, **_kwargs):
+            return self
+
+        def first(self):
+            return None
+
+        def all(self):
+            return [employee]
+
+    class FakeDb:
+        def query(self, *_args, **_kwargs):
+            return FakeQuery()
+
+    assert _employee_by_name(FakeDb(), "Leandro  Montenegro Machado") is employee
+
+
+def test_employee_lookup_normalizes_accents_and_case():
+    assert _normalize_lookup_text("Homologação") == _normalize_lookup_text("homologacao")

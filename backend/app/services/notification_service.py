@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 import re
 import smtplib
+import unicodedata
 from abc import ABC, abstractmethod
 from datetime import datetime, timezone
 from email.message import EmailMessage
@@ -138,7 +139,9 @@ def _notifications_for_item(
     employees = _resolve_recipients(db, rule, item)
     notifications: list[Notification] = []
     if not employees:
-        notifications.append(_create_error_notification(db, automation, run, rule, "Funcionario destinatario nao encontrado.", item=item))
+        target = _recipient_reference_from_item(item)
+        detail = f": {target}" if target else ""
+        notifications.append(_create_error_notification(db, automation, run, rule, f"Funcionario destinatario nao encontrado{detail}.", item=item))
         return notifications
 
     template = rule.template if rule.template and rule.template.is_active else None
@@ -276,14 +279,69 @@ def _employee_from_item(db: Session, item: dict[str, Any]) -> Employee | None:
 
     email = _first_value(item, ["responsavel_email", "email", "assigned_to_email"])
     if email:
-        employee = db.query(Employee).filter(Employee.email.ilike(str(email))).first()
+        employee = db.query(Employee).filter(Employee.email.ilike(str(email).strip())).first()
         if employee:
             return employee
 
     name = _first_value(item, ["responsavel_nome", "nome_responsavel", "assigned_to", "responsavel"])
     if name:
-        return db.query(Employee).filter(Employee.name.ilike(str(name))).first()
+        return _employee_by_name(db, name)
     return None
+
+
+def _employee_by_name(db: Session, name: Any) -> Employee | None:
+    collapsed = _collapse_spaces(name)
+    if not collapsed:
+        return None
+
+    employee = db.query(Employee).filter(Employee.name.ilike(collapsed)).first()
+    if employee:
+        return employee
+
+    normalized = _normalize_lookup_text(collapsed)
+    employees = db.query(Employee).all()
+    for candidate in employees:
+        if _normalize_lookup_text(candidate.name) == normalized:
+            return candidate
+
+    compact = normalized.replace(" ", "")
+    for candidate in employees:
+        candidate_normalized = _normalize_lookup_text(candidate.name)
+        candidate_compact = candidate_normalized.replace(" ", "")
+        if candidate_compact and compact and (candidate_compact == compact or candidate_normalized in normalized or normalized in candidate_normalized):
+            return candidate
+    return None
+
+
+def _recipient_reference_from_item(item: dict[str, Any]) -> str | None:
+    value = _first_value(
+        item,
+        [
+            "responsavel_nome",
+            "nome_responsavel",
+            "assigned_to",
+            "responsavel",
+            "responsavel_email",
+            "email",
+            "assigned_to_email",
+            "responsavel_id",
+            "employee_id",
+            "funcionario_id",
+            "assigned_to_id",
+        ],
+    )
+    return _collapse_spaces(value) or None
+
+
+def _collapse_spaces(value: Any) -> str:
+    return re.sub(r"\s+", " ", str(value or "").strip())
+
+
+def _normalize_lookup_text(value: Any) -> str:
+    text = _collapse_spaces(value)
+    decomposed = unicodedata.normalize("NFKD", text)
+    without_accents = "".join(char for char in decomposed if not unicodedata.combining(char))
+    return without_accents.casefold()
 
 
 def _recipient_for_channel(employee: Employee, channel: str) -> str | None:
