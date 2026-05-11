@@ -223,7 +223,16 @@ def _notifications_for_item(
     if not employees:
         target = _recipient_reference_from_item(item)
         detail = f": {target}" if target else ""
-        notifications.append(_create_error_notification(db, automation, run, rule, f"Funcionario destinatario nao encontrado{detail}.", item=item))
+        notifications.append(
+            _create_error_notification(
+                db,
+                automation,
+                run,
+                rule,
+                f"Funcionario destinatario nao encontrado{detail}. Tipo de destinatario: {rule.recipient_type or 'responsavel'}.",
+                item=item,
+            )
+        )
         return notifications
 
     template = rule.template if rule.template and rule.template.is_active else None
@@ -342,6 +351,13 @@ def _resolve_recipients(db: Session, rule: NotificationRule, item: dict[str, Any
     if recipient_type == "funcionario_fixo":
         employee_id = (rule.params_json or {}).get("employee_id")
         employee = db.query(Employee).filter(Employee.id == employee_id).first() if employee_id else None
+        if employee:
+            return [employee]
+        logger.warning(
+            "fixed_employee_notification_without_employee",
+            extra={"rule_id": rule.id, "automation_id": rule.automation_id},
+        )
+        employee = _employee_from_item(db, item)
         return [employee] if employee else []
 
     employee = _employee_from_item(db, item)
