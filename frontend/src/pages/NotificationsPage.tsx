@@ -83,6 +83,10 @@ const NotificationsPage: React.FC = () => {
     [rules, ruleForm.id],
   );
 
+  const pendingApprovalCount = history.filter((item) => item.status === 'aguardando_aprovacao').length;
+  const errorCount = history.filter((item) => item.status === 'erro').length;
+  const sentCount = history.filter((item) => ['enviado', 'simulado'].includes(item.status)).length;
+
   const load = async () => {
     setLoading(true);
     setError(null);
@@ -280,36 +284,37 @@ const NotificationsPage: React.FC = () => {
         </div>
       )}
 
-      <div className="mb-5 flex flex-wrap items-center justify-between gap-3">
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-          <div className="rounded-lg border border-slate-200 bg-white px-4 py-3 shadow-sm">
-            <p className="text-xs font-bold uppercase text-slate-400">Templates</p>
-            <p className="text-2xl font-black text-slate-900">{templates.length}</p>
+      <div className="mb-6 flex flex-col gap-4 xl:flex-row xl:items-end xl:justify-between">
+        <div className="grid grid-cols-2 gap-3 md:grid-cols-4 xl:min-w-[760px]">
+          <div className="rounded-xl border border-slate-200 bg-white px-4 py-4 shadow-sm">
+            <p className="text-[11px] font-bold uppercase tracking-wide text-slate-400">Templates</p>
+            <p className="mt-2 text-2xl font-black text-slate-900">{templates.length}</p>
           </div>
-          <div className="rounded-lg border border-slate-200 bg-white px-4 py-3 shadow-sm">
-            <p className="text-xs font-bold uppercase text-slate-400">Regras</p>
-            <p className="text-2xl font-black text-slate-900">{rules.length}</p>
+          <div className="rounded-xl border border-slate-200 bg-white px-4 py-4 shadow-sm">
+            <p className="text-[11px] font-bold uppercase tracking-wide text-slate-400">Regras</p>
+            <p className="mt-2 text-2xl font-black text-slate-900">{rules.length}</p>
           </div>
-          <div className="rounded-lg border border-slate-200 bg-white px-4 py-3 shadow-sm">
-            <p className="text-xs font-bold uppercase text-slate-400">Historico</p>
-            <p className="text-2xl font-black text-slate-900">{history.length}</p>
+          <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-4 shadow-sm">
+            <p className="text-[11px] font-bold uppercase tracking-wide text-emerald-600">Enviadas</p>
+            <p className="mt-2 text-2xl font-black text-emerald-900">{sentCount}</p>
           </div>
-          <div className="rounded-lg border border-blue-200 bg-blue-50 px-4 py-3 shadow-sm">
-            <p className="text-xs font-bold uppercase text-blue-500">Aguardando aprovacao</p>
-            <p className="text-2xl font-black text-blue-900">{history.filter((item) => item.status === 'aguardando_aprovacao').length}</p>
+          <div className="rounded-xl border border-blue-200 bg-blue-50 px-4 py-4 shadow-sm">
+            <p className="text-[11px] font-bold uppercase tracking-wide text-blue-600">Aprovacao</p>
+            <p className="mt-2 text-2xl font-black text-blue-900">{pendingApprovalCount}</p>
+            {errorCount > 0 && <p className="mt-1 text-xs font-semibold text-red-600">{errorCount} com erro</p>}
           </div>
         </div>
         <button
           onClick={load}
-          className="inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm font-bold text-slate-700 shadow-sm hover:bg-slate-50"
+          className="inline-flex w-full items-center justify-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm font-bold text-slate-700 shadow-sm hover:bg-slate-50 sm:w-auto"
         >
           <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
           Atualizar
         </button>
       </div>
 
-      <section className="grid grid-cols-1 gap-6 xl:grid-cols-[380px_minmax(0,1fr)]">
-        <div className="rounded-xl border border-slate-200 bg-white shadow-sm">
+      <section className="grid grid-cols-1 gap-5 2xl:grid-cols-[420px_minmax(0,1fr)]">
+        <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
           <div className="flex items-center justify-between gap-3 border-b border-slate-100 px-5 py-4">
             <div>
               <h2 className="text-lg font-bold text-slate-900">1. Templates salvos</h2>
@@ -326,7 +331,7 @@ const NotificationsPage: React.FC = () => {
           <div className="max-h-[520px] divide-y divide-slate-100 overflow-y-auto">
             {templates.length === 0 && <p className="p-5 text-sm text-slate-500">Nenhum template criado.</p>}
             {templates.map((template) => (
-              <article key={template.id} className={`p-4 ${selectedTemplate?.id === template.id ? 'bg-blue-50' : ''}`}>
+              <article key={template.id} className={`p-4 transition ${selectedTemplate?.id === template.id ? 'bg-blue-50' : 'hover:bg-slate-50'}`}>
                 <div className="flex items-start justify-between gap-3">
                   <div className="min-w-0">
                     <h3 className="break-words text-sm font-bold text-slate-900">{template.name}</h3>
@@ -353,7 +358,7 @@ const NotificationsPage: React.FC = () => {
           </div>
         </div>
 
-        <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+        <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm sm:p-5">
           <div className="flex flex-wrap items-start justify-between gap-3">
             <div>
               <h2 className="text-lg font-bold text-slate-900">
@@ -361,7 +366,7 @@ const NotificationsPage: React.FC = () => {
               </h2>
               <p className="text-sm text-slate-500">Depois de salvar, use este template em uma regra por rotina.</p>
             </div>
-            <button onClick={saveTemplate} className="inline-flex items-center gap-2 rounded-lg bg-primary px-4 py-2 text-sm font-bold text-white hover:bg-primary-dark">
+            <button onClick={saveTemplate} className="inline-flex w-full items-center justify-center gap-2 rounded-xl bg-primary px-4 py-2.5 text-sm font-bold text-white hover:bg-primary-dark sm:w-auto">
               <Save className="h-4 w-4" />
               Salvar template
             </button>
@@ -391,7 +396,7 @@ const NotificationsPage: React.FC = () => {
               />
             </div>
             <textarea
-              className="h-72 w-full rounded-lg border border-slate-200 px-3 py-2 font-mono text-sm"
+              className="h-64 w-full rounded-lg border border-slate-200 px-3 py-2 font-mono text-sm sm:h-72"
               value={templateForm.body}
               onChange={(event) => setTemplateForm({ ...templateForm, body: event.target.value })}
             />
@@ -410,8 +415,8 @@ const NotificationsPage: React.FC = () => {
         </div>
       </section>
 
-      <section className="mt-6 grid grid-cols-1 gap-6 xl:grid-cols-[380px_minmax(0,1fr)]">
-        <div className="rounded-xl border border-slate-200 bg-white shadow-sm">
+      <section className="mt-6 grid grid-cols-1 gap-5 2xl:grid-cols-[420px_minmax(0,1fr)]">
+        <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
           <div className="flex items-center justify-between gap-3 border-b border-slate-100 px-5 py-4">
             <div>
               <h2 className="text-lg font-bold text-slate-900">2. Regras por rotina</h2>
@@ -428,7 +433,7 @@ const NotificationsPage: React.FC = () => {
           <div className="max-h-[520px] divide-y divide-slate-100 overflow-y-auto">
             {rules.length === 0 && <p className="p-5 text-sm text-slate-500">Nenhuma regra criada.</p>}
             {rules.map((rule) => (
-              <article key={rule.id} className={`p-4 ${selectedRule?.id === rule.id ? 'bg-blue-50' : ''}`}>
+              <article key={rule.id} className={`p-4 transition ${selectedRule?.id === rule.id ? 'bg-blue-50' : 'hover:bg-slate-50'}`}>
                 <h3 className="break-words text-sm font-bold text-slate-900">{rule.automation_name || `Rotina #${rule.automation_id}`}</h3>
                 <p className="mt-1 text-xs text-slate-500">
                   Template: {rule.template_name || 'Padrao'} · Canal: {channelLabel[rule.preferred_channel] || rule.preferred_channel}
@@ -450,7 +455,7 @@ const NotificationsPage: React.FC = () => {
           </div>
         </div>
 
-        <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+        <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm sm:p-5">
           <div className="flex flex-wrap items-start justify-between gap-3">
             <div>
               <h2 className="text-lg font-bold text-slate-900">
@@ -458,7 +463,7 @@ const NotificationsPage: React.FC = () => {
               </h2>
               <p className="text-sm text-slate-500">Vincule uma rotina a um template e defina os canais.</p>
             </div>
-            <button onClick={saveRule} className="inline-flex items-center gap-2 rounded-lg bg-primary px-4 py-2 text-sm font-bold text-white hover:bg-primary-dark">
+            <button onClick={saveRule} className="inline-flex w-full items-center justify-center gap-2 rounded-xl bg-primary px-4 py-2.5 text-sm font-bold text-white hover:bg-primary-dark sm:w-auto">
               <Save className="h-4 w-4" />
               Salvar regra
             </button>
@@ -549,12 +554,67 @@ const NotificationsPage: React.FC = () => {
         </div>
       </section>
 
-      <section className="mt-6 overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
-        <div className="border-b border-slate-100 px-5 py-4">
-          <h2 className="text-lg font-bold text-slate-900">3. Historico de notificacoes</h2>
-          <p className="text-sm text-slate-500">Ultimos registros de envio, simulacao e erro.</p>
+      <section className="mt-6 overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
+        <div className="flex flex-col gap-3 border-b border-slate-100 px-5 py-4 lg:flex-row lg:items-center lg:justify-between">
+          <div>
+            <h2 className="text-lg font-bold text-slate-900">3. Historico de notificacoes</h2>
+            <p className="text-sm text-slate-500">Ultimos registros de envio, simulacao e erro.</p>
+          </div>
+          <div className="flex flex-wrap gap-2 text-xs font-bold">
+            <span className="rounded-full bg-blue-100 px-3 py-1 text-blue-700">{pendingApprovalCount} aguardando aprovacao</span>
+            <span className="rounded-full bg-red-100 px-3 py-1 text-red-700">{errorCount} com erro</span>
+          </div>
         </div>
-        <div className="overflow-x-auto">
+
+        <div className="divide-y divide-slate-100 md:hidden">
+          {history.map((item) => (
+            <article key={item.id} className="p-4">
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <h3 className="break-words text-sm font-bold text-slate-900">{item.automation_name || '-'}</h3>
+                  <p className="mt-1 text-xs text-slate-500">{formatDateTime(item.sent_at || item.data_envio)}</p>
+                </div>
+                <span className={`shrink-0 rounded-full px-2.5 py-1 text-[11px] font-bold ${statusStyles[item.status] || 'bg-slate-100 text-slate-700'}`}>
+                  {item.status}
+                </span>
+              </div>
+              <div className="mt-3 rounded-xl bg-slate-50 p-3">
+                <p className="text-xs font-bold uppercase text-slate-400">Funcionario</p>
+                <p className="mt-1 break-words text-sm font-semibold text-slate-800">{item.employee_name || '-'}</p>
+                <p className="break-words text-xs text-slate-500">{item.recipient || '-'}</p>
+              </div>
+              <div className="mt-3">
+                <p className="break-words text-sm font-bold text-slate-800">{item.subject || '-'}</p>
+                <p className={`mt-1 line-clamp-3 break-words text-xs ${item.status === 'erro' || item.status === 'simulado' ? 'text-red-600' : 'text-slate-500'}`}>
+                  {item.error || item.message || '-'}
+                </p>
+              </div>
+              <div className="mt-4 flex flex-wrap gap-2">
+                {item.status === 'aguardando_aprovacao' && (
+                  <>
+                    <button onClick={() => approve(item.id)} className="inline-flex flex-1 items-center justify-center gap-1 rounded-xl bg-emerald-600 px-3 py-2 text-xs font-bold text-white">
+                      <CheckCircle2 className="h-4 w-4" />
+                      Aprovar
+                    </button>
+                    <button onClick={() => cancel(item.id)} className="inline-flex flex-1 items-center justify-center gap-1 rounded-xl border border-red-200 px-3 py-2 text-xs font-bold text-red-700">
+                      <XCircle className="h-4 w-4" />
+                      Cancelar
+                    </button>
+                  </>
+                )}
+                {item.status === 'erro' && (
+                  <button onClick={() => retry(item.id)} className="inline-flex w-full items-center justify-center gap-1 rounded-xl bg-cyan-700 px-3 py-2 text-xs font-bold text-white">
+                    <Send className="h-4 w-4" />
+                    Reenviar
+                  </button>
+                )}
+              </div>
+            </article>
+          ))}
+          {history.length === 0 && <p className="px-4 py-8 text-center text-sm text-slate-500">Nenhuma notificacao registrada.</p>}
+        </div>
+
+        <div className="hidden overflow-x-auto md:block">
           <table className="min-w-full text-sm">
             <thead className="bg-slate-50 text-slate-600">
               <tr>
@@ -569,11 +629,13 @@ const NotificationsPage: React.FC = () => {
             </thead>
             <tbody>
               {history.map((item) => (
-                <tr key={item.id} className="border-t border-slate-100">
-                  <td className="px-4 py-3">{item.automation_name || '-'}</td>
+                <tr key={item.id} className="border-t border-slate-100 hover:bg-slate-50">
+                  <td className="max-w-[220px] px-4 py-3 font-semibold text-slate-800">
+                    <span className="line-clamp-2">{item.automation_name || '-'}</span>
+                  </td>
                   <td className="px-4 py-3">
-                    <div>{item.employee_name || '-'}</div>
-                    <div className="text-xs text-slate-500">{item.recipient || '-'}</div>
+                    <div className="font-semibold text-slate-800">{item.employee_name || '-'}</div>
+                    <div className="max-w-[220px] truncate text-xs text-slate-500">{item.recipient || '-'}</div>
                   </td>
                   <td className="px-4 py-3">{channelLabel[item.channel] || item.channel}</td>
                   <td className="px-4 py-3">
@@ -592,18 +654,18 @@ const NotificationsPage: React.FC = () => {
                   <td className="px-4 py-3">
                     {item.status === 'aguardando_aprovacao' && (
                       <div className="flex flex-wrap gap-2">
-                        <button onClick={() => approve(item.id)} className="inline-flex items-center gap-1 font-semibold text-emerald-700">
+                        <button onClick={() => approve(item.id)} className="inline-flex items-center gap-1 rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-bold text-white">
                           <CheckCircle2 className="h-4 w-4" />
                           Aprovar envio
                         </button>
-                        <button onClick={() => cancel(item.id)} className="inline-flex items-center gap-1 font-semibold text-red-700">
+                        <button onClick={() => cancel(item.id)} className="inline-flex items-center gap-1 rounded-lg border border-red-200 px-3 py-1.5 text-xs font-bold text-red-700">
                           <XCircle className="h-4 w-4" />
                           Cancelar
                         </button>
                       </div>
                     )}
                     {item.status === 'erro' && (
-                      <button onClick={() => retry(item.id)} className="inline-flex items-center gap-1 font-semibold text-cyan-700">
+                      <button onClick={() => retry(item.id)} className="inline-flex items-center gap-1 rounded-lg bg-cyan-700 px-3 py-1.5 text-xs font-bold text-white">
                         <Send className="h-4 w-4" />
                         Reenviar
                       </button>
@@ -613,7 +675,7 @@ const NotificationsPage: React.FC = () => {
               ))}
               {history.length === 0 && (
                 <tr>
-                  <td colSpan={6} className="px-4 py-8 text-center text-slate-500">Nenhuma notificacao registrada.</td>
+                  <td colSpan={7} className="px-4 py-8 text-center text-slate-500">Nenhuma notificacao registrada.</td>
                 </tr>
               )}
             </tbody>
