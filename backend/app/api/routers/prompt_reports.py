@@ -127,6 +127,36 @@ def run_prompt_report_template_now(
     return PromptReportRunOut(report_id=report.id, status=report.status, extracted_filters=serializable_filters)
 
 
+@router.post("/{template_id}/run-routine", response_model=PromptReportRunOut)
+def run_prompt_report_template_as_routine(
+    template_id: int,
+    payload: PromptReportRunRequest,
+    db: Session = Depends(get_db),
+    _user=Depends(get_current_user),
+):
+    template = db.query(PromptReportTemplate).filter(PromptReportTemplate.id == template_id).first()
+    if not template:
+        raise HTTPException(status_code=404, detail="Template not found")
+    try:
+        report, filters = run_prompt_report_template(
+            db,
+            template,
+            prompt_override=payload.prompt_override,
+            trigger="routine_manual",
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=502, detail=f"Failed to run prompt report routine: {exc}") from exc
+
+    serializable_filters = {
+        **filters,
+        "start_date": str(filters.get("start_date")),
+        "end_date": str(filters.get("end_date")),
+    }
+    return PromptReportRunOut(report_id=report.id, status=report.status, extracted_filters=serializable_filters)
+
+
 @router.get("/{template_id}/runs", response_model=list[ReportOut])
 def list_prompt_report_runs(
     template_id: int,

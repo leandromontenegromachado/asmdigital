@@ -50,8 +50,19 @@ export interface NotificationHistory {
   created_at: string;
 }
 
+export interface NotificationTemplateVariables {
+  automation_id: number;
+  source_run_ids: number[];
+  variables: string[];
+  samples: Record<string, any>;
+  aliases: Record<string, string>;
+}
+
 export const listNotificationTemplates = async () =>
   (await api.get<NotificationTemplate[]>('/notification-templates')).data;
+
+export const listNotificationTemplateVariables = async (automationId: number) =>
+  (await api.get<NotificationTemplateVariables>('/notification-template-variables', { params: { automation_id: automationId } })).data;
 
 export const createNotificationTemplate = async (payload: Omit<NotificationTemplate, 'id' | 'created_at' | 'updated_at'>) =>
   (await api.post<NotificationTemplate>('/notification-templates', payload)).data;
@@ -76,7 +87,7 @@ export const deleteNotificationRule = async (id: number) => {
   await api.delete(`/notification-rules/${id}`);
 };
 
-export const listNotifications = async (params?: { execution_id?: number; automation_id?: number; status?: string }) =>
+export const listNotifications = async (params?: { execution_id?: number; automation_id?: number; status?: string; limit?: number; offset?: number }) =>
   (await api.get<NotificationHistory[]>('/notifications', { params })).data;
 
 export const retryNotification = async (id: number) =>

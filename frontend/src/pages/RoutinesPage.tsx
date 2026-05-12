@@ -14,7 +14,7 @@ import {
   runAutomation,
   updateAutomation,
 } from '../api/automations';
-import { PromptReportTemplate, listPromptReportRuns, listPromptReportTemplates, runPromptReportTemplate } from '../api/promptReports';
+import { PromptReportTemplate, listPromptReportRuns, listPromptReportTemplates, runPromptReportTemplateAsRoutine } from '../api/promptReports';
 import { Report } from '../api/reports';
 
 type ViewMode = 'grid' | 'list';
@@ -748,7 +748,7 @@ const RoutinesPage: React.FC = () => {
     setError(null);
     setInfo(null);
     try {
-      const result = await runPromptReportTemplate(template.id);
+      const result = await runPromptReportTemplateAsRoutine(template.id);
       await loadData();
       setInfo(`Relatório executado: ${template.name}`);
       window.location.href = `/reports/redmine-deliveries?report_id=${result.report_id}`;

@@ -15,7 +15,7 @@ from typing import Any
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
-from app.models import Automation, AutomationRun, Employee, Notification, NotificationRule, NotificationTemplate, Report, ReportRow
+from app.models import Automation, AutomationRun, Connector, Employee, Notification, NotificationRule, NotificationTemplate, Report, ReportRow
 
 logger = logging.getLogger(__name__)
 
@@ -81,6 +81,60 @@ PROVIDERS: dict[str, NotificationProvider] = {
     "teams": TeamsNotificationProvider(),
     "internal": InternalNotificationProvider(),
 }
+
+
+BASE_TEMPLATE_VARIABLES = [
+    "nome_destinatario",
+    "nome_responsavel",
+    "email",
+    "nome_rotina",
+    "rotina_id",
+    "execucao_id",
+    "data_execucao",
+    "link_relatorio",
+    "link_demanda",
+    "demanda_id",
+    "nome_projeto",
+]
+
+
+def template_variables_for_automation(db: Session, automation_id: int, *, limit: int = 5) -> dict[str, Any]:
+    runs = (
+        db.query(AutomationRun)
+        .filter(AutomationRun.automation_id == automation_id)
+        .order_by(AutomationRun.started_at.desc())
+        .limit(limit)
+        .all()
+    )
+    variable_names = set(BASE_TEMPLATE_VARIABLES)
+    samples: dict[str, Any] = {}
+    source_run_ids: list[int] = []
+
+    for run in runs:
+        source_run_ids.append(run.id)
+        items = _structured_items_from_run(db, run)
+        for item in items:
+            for key, value in _flatten_dict(item).items():
+                if not key or key in variable_names:
+                    continue
+                variable_names.add(key)
+                if len(samples) < 80:
+                    samples[key] = value
+
+    aliases = {
+        "dias_atraso": "Alias para days_overdue ou campo equivalente.",
+        "nome_responsavel": "Alias para responsavel_nome, assigned_to ou atribuido_para.",
+        "nome_projeto": "Alias para projeto, project ou entrega.",
+        "link_demanda": "Link direto da demanda no Redmine quando houver source_ref/source_url.",
+        "demanda_id": "ID da demanda no Redmine.",
+    }
+    return {
+        "automation_id": automation_id,
+        "source_run_ids": source_run_ids,
+        "variables": sorted(variable_names),
+        "samples": samples,
+        "aliases": aliases,
+    }
 
 
 def render_template(template: str | None, variables: dict[str, Any]) -> str:
@@ -190,7 +244,8 @@ def _reprocess_failed_notification(db: Session, notification: Notification, *, s
             if not employees:
                 continue
             template = rule.template if rule.template and rule.template.is_active else None
-            rebuilt = _build_notification(db, automation, run, rule, template, employees[0], item, simulation=simulation)
+            manager = _manager_for_item(rule, employees[0], item)
+            rebuilt = _build_notification(db, automation, run, rule, template, employees[0], item, manager=manager, simulation=simulation)
             notification.employee_id = rebuilt.employee_id
             notification.channel = rebuilt.channel
             notification.recipient = rebuilt.recipient
@@ -270,7 +325,8 @@ def _notifications_for_item(
 
     template = rule.template if rule.template and rule.template.is_active else None
     for employee in employees:
-        notification = _build_notification(db, automation, run, rule, template, employee, item, simulation=simulation)
+        manager = _manager_for_item(rule, employee, item)
+        notification = _build_notification(db, automation, run, rule, template, employee, item, manager=manager, simulation=simulation)
         if rule.requires_approval:
             notification.status = NOTIFICATION_PENDING_APPROVAL
         else:
@@ -289,6 +345,7 @@ def _build_notification(
     employee: Employee,
     item: dict[str, Any],
     *,
+    manager: Employee | None = None,
     simulation: bool,
 ) -> Notification:
     channel = (rule.preferred_channel or employee.canal_preferencial or "email").lower()
@@ -302,6 +359,12 @@ def _build_notification(
     body_template = template.body if template else _default_template()
     subject = render_template(subject_template, variables)
     message = render_template(body_template, variables)
+    to_ref = recipient
+    if manager:
+        manager_recipient = _recipient_for_channel(manager, channel)
+        if manager_recipient:
+            to_ref = _manager_delivery_ref(manager, manager_recipient)
+            message = _append_manager_delivery_note(message, manager, manager_recipient)
 
     notification = Notification(
         execution_id=run.id,
@@ -309,7 +372,7 @@ def _build_notification(
         employee_id=employee.id,
         channel=channel,
         recipient=recipient,
-        to_ref=recipient,
+        to_ref=to_ref,
         subject=subject,
         message=message,
         body=message,
@@ -336,9 +399,13 @@ def _dispatch_notification(notification: Notification, *, simulation: bool) -> N
         return
     try:
         result = provider.send(notification.recipient or "", notification.subject, notification.message or "", simulation=simulation or notification.simulation)
+        manager_error = _dispatch_manager_copy(notification, provider, simulation=simulation)
         if isinstance(result, dict) and result.get("status") == "simulated":
             notification.status = NOTIFICATION_SIMULATED
             notification.error = result.get("reason") or "Envio simulado."
+        elif manager_error:
+            notification.status = NOTIFICATION_ERROR
+            notification.error = manager_error
         else:
             notification.status = NOTIFICATION_SENT
             notification.error = None
@@ -349,6 +416,71 @@ def _dispatch_notification(notification: Notification, *, simulation: bool) -> N
         logger.exception("notification_send_failed", extra={"notification_id": notification.id, "channel": notification.channel})
         notification.status = NOTIFICATION_ERROR
         notification.error = str(exc)
+
+
+def _manager_delivery_ref(manager: Employee, recipient: str) -> str:
+    return json.dumps(
+        {
+            "manager_copy": {
+                "id": manager.id,
+                "name": manager.name,
+                "recipient": recipient,
+            }
+        },
+        ensure_ascii=False,
+    )
+
+
+def _manager_delivery_from_ref(notification: Notification) -> dict[str, Any] | None:
+    if not notification.to_ref:
+        return None
+    try:
+        parsed = json.loads(notification.to_ref)
+    except (TypeError, json.JSONDecodeError):
+        return None
+    manager_copy = parsed.get("manager_copy") if isinstance(parsed, dict) else None
+    return manager_copy if isinstance(manager_copy, dict) and manager_copy.get("recipient") else None
+
+
+def _append_manager_delivery_note(message: str, manager: Employee, recipient: str) -> str:
+    note = (
+        "\n\n---\n"
+        "Registro interno de envio:\n"
+        f"Esta notificacao tambem sera enviada ao gestor {manager.name} ({recipient}) quando o envio for aprovado/processado."
+    )
+    return f"{message.rstrip()}{note}"
+
+
+def _dispatch_manager_copy(notification: Notification, provider: NotificationProvider, *, simulation: bool) -> str | None:
+    manager_copy = _manager_delivery_from_ref(notification)
+    if not manager_copy:
+        return None
+    recipient = str(manager_copy.get("recipient") or "").strip()
+    if not recipient:
+        return None
+    message = _manager_notification_message(notification, manager_copy)
+    try:
+        provider.send(recipient, notification.subject, message, simulation=simulation or notification.simulation)
+    except Exception as exc:  # noqa: BLE001
+        logger.exception(
+            "manager_notification_send_failed",
+            extra={"notification_id": notification.id, "channel": notification.channel, "manager_recipient": recipient},
+        )
+        return f"Notificacao enviada ao responsavel, mas falhou ao enviar ao gestor {manager_copy.get('name') or recipient}: {exc}"
+    return None
+
+
+def _manager_notification_message(notification: Notification, manager_copy: dict[str, Any]) -> str:
+    responsible = notification.employee.name if notification.employee else "responsavel"
+    manager_name = manager_copy.get("name") or "gestor"
+    return (
+        f"Ola, {manager_name}.\n\n"
+        "Este e um aviso de acompanhamento.\n\n"
+        f"A rotina \"{notification.automation.name if notification.automation else ''}\" enviou uma notificacao para "
+        f"{responsible} sobre um item identificado no resultado da rotina.\n\n"
+        "A mensagem enviada ao responsavel foi:\n\n"
+        f"{notification.message or ''}"
+    )
 
 
 def _create_error_notification(
@@ -394,10 +526,16 @@ def _resolve_recipients(db: Session, rule: NotificationRule, item: dict[str, Any
         return [employee] if employee else []
 
     employee = _employee_from_item(db, item)
-    recipients = [employee] if employee else []
-    if rule.notify_manager and employee and employee.manager and _condition_matches(rule.manager_condition, item):
-        recipients.append(employee.manager)
-    return recipients
+    return [employee] if employee else []
+
+
+def _manager_for_item(rule: NotificationRule, employee: Employee, item: dict[str, Any]) -> Employee | None:
+    recipient_type = (rule.recipient_type or "responsavel").lower()
+    if recipient_type == "gestor":
+        return None
+    if rule.notify_manager and employee.manager and _condition_matches(rule.manager_condition, item):
+        return employee.manager
+    return None
 
 
 def _employee_from_item(db: Session, item: dict[str, Any]) -> Employee | None:
@@ -575,6 +713,20 @@ def _flatten_text(value: Any) -> str:
     return " ".join(parts)
 
 
+def _flatten_dict(value: dict[str, Any], prefix: str = "") -> dict[str, Any]:
+    flattened: dict[str, Any] = {}
+    for key, nested_value in value.items():
+        if not key:
+            continue
+        clean_key = str(key).strip()
+        full_key = f"{prefix}.{clean_key}" if prefix else clean_key
+        if isinstance(nested_value, dict):
+            flattened.update(_flatten_dict(nested_value, full_key))
+        else:
+            flattened[full_key] = nested_value
+    return flattened
+
+
 def _recipient_reference_from_item(item: dict[str, Any]) -> str | None:
     value = _first_value(
         item,
@@ -644,15 +796,29 @@ def _structured_items_from_run(db: Session, run: AutomationRun) -> list[dict[str
 def _items_from_report(db: Session, report: Report) -> list[dict[str, Any]]:
     rows = db.query(ReportRow).filter(ReportRow.report_id == report.id).order_by(ReportRow.id.asc()).all()
     items: list[dict[str, Any]] = []
+    params = report.params_json or {}
+    connector_id = params.get("connector_id")
+    connector = db.query(Connector).filter(Connector.id == int(connector_id)).first() if connector_id else None
+    redmine_base_url = (connector.config_json or {}).get("base_url") if connector else None
+    project_ids = params.get("project_ids") if isinstance(params.get("project_ids"), list) else []
+    project_id = project_ids[0] if project_ids else params.get("project_id")
     for row in rows:
         raw = row.raw_json if isinstance(row.raw_json, dict) else {}
+        demand_url = row.source_url or _redmine_issue_url(redmine_base_url, row.source_ref)
         item = {
             **raw,
             "cliente": row.cliente,
             "sistema": row.sistema,
             "entrega": row.entrega,
+            "project_id": project_id,
+            "project_ids": ", ".join(str(value) for value in project_ids),
+            "nome_projeto": project_id or row.sistema or row.entrega or _project_name_from_subject(raw.get("subject")),
+            "demanda_id": row.source_ref,
+            "id_demanda": row.source_ref,
             "source_ref": row.source_ref,
-            "source_url": row.source_url,
+            "source_url": demand_url,
+            "link_demanda": demand_url,
+            "redmine_issue_url": demand_url,
             "link_relatorio": f"{settings.app_public_url}/reports/redmine-deliveries?report_id={report.id}",
         }
         items.append(item)
@@ -661,20 +827,59 @@ def _items_from_report(db: Session, report: Report) -> list[dict[str, Any]]:
 
 def _template_variables(automation: Automation, run: AutomationRun | None, employee: Employee, item: dict[str, Any]) -> dict[str, Any]:
     variables = dict(item)
+    variables.update(_flatten_dict(item))
+    responsible_name = _first_value(
+        item,
+        [
+            "responsavel_nome",
+            "nome_responsavel",
+            "assigned_to",
+            "assignedTo",
+            "responsavel",
+            "atribuido_para",
+            "atribuÃ­do_para",
+            "Atribuido para",
+            "AtribuÃ­do para",
+        ],
+    )
+    days_overdue = _first_value(item, ["dias_atraso", "days_overdue", "dias em atraso", "Dias em atraso"])
+    demand_id = _first_value(item, ["demanda_id", "id_demanda", "source_ref", "id"])
+    demand_url = _first_value(item, ["link_demanda", "redmine_issue_url", "source_url", "url"])
+    project_name = _first_value(item, ["nome_projeto", "projeto", "project", "project_id", "project_ids", "sistema", "entrega"])
+    if not project_name:
+        project_name = _project_name_from_subject(item.get("subject"))
     variables.update(
         {
             "nome": employee.name,
-            "nome_responsavel": employee.name,
+            "nome_destinatario": employee.name,
+            "nome_responsavel": _collapse_spaces(responsible_name) or employee.name,
             "email": employee.email,
             "nome_rotina": automation.name,
             "rotina_id": automation.id,
             "execucao_id": run.id if run else "",
             "data_execucao": run.started_at.date().isoformat() if run and run.started_at else "",
+            "dias_atraso": days_overdue or "",
+            "demanda_id": demand_id or "",
+            "id_demanda": demand_id or "",
+            "link_demanda": demand_url or "",
+            "redmine_issue_url": demand_url or "",
             "link_relatorio": item.get("link_relatorio") or (f"{settings.app_public_url}/routines?run_id={run.id}" if run else settings.app_public_url),
-            "nome_projeto": item.get("projeto") or item.get("project") or item.get("entrega") or "",
+            "nome_projeto": project_name or "",
         }
     )
     return variables
+
+
+def _redmine_issue_url(base_url: str | None, issue_id: Any) -> str | None:
+    if not base_url or not issue_id:
+        return None
+    return f"{str(base_url).rstrip('/')}/issues/{issue_id}"
+
+
+def _project_name_from_subject(subject: Any) -> str | None:
+    text = _collapse_spaces(subject)
+    match = re.match(r"^\[([^\]]+)\]", text)
+    return match.group(1).strip() if match else None
 
 
 def _condition_matches(condition: str | None, context: dict[str, Any]) -> bool:

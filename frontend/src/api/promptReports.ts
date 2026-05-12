@@ -54,6 +54,11 @@ export const runPromptReportTemplate = async (id: number, prompt_override?: stri
   return data;
 };
 
+export const runPromptReportTemplateAsRoutine = async (id: number, prompt_override?: string) => {
+  const { data } = await api.post<PromptReportRunResponse>(`/prompt-reports/${id}/run-routine`, { prompt_override });
+  return data;
+};
+
 export const listPromptReportRuns = async (id: number, limit = 20) => {
   const { data } = await api.get<Report[]>(`/prompt-reports/${id}/runs`, { params: { limit } });
   return data;

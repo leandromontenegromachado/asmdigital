@@ -14,7 +14,7 @@ from app.schemas.notifications import (
     NotificationTemplateOut,
     NotificationTemplateUpdate,
 )
-from app.services.notification_service import approve_notification, cancel_notification, retry_notification
+from app.services.notification_service import approve_notification, cancel_notification, retry_notification, template_variables_for_automation
 
 router = APIRouter(tags=["notifications"])
 
@@ -82,6 +82,18 @@ def _notification_out(notification: Notification) -> NotificationOut:
 @router.get("/notification-templates", response_model=list[NotificationTemplateOut])
 def list_templates(db: Session = Depends(get_db), _user=Depends(get_current_user)):
     return db.query(NotificationTemplate).order_by(NotificationTemplate.name.asc()).all()
+
+
+@router.get("/notification-template-variables")
+def list_template_variables(
+    automation_id: int = Query(...),
+    db: Session = Depends(get_db),
+    _user=Depends(get_current_user),
+):
+    automation = db.query(Automation).filter(Automation.id == automation_id).first()
+    if not automation:
+        raise HTTPException(status_code=404, detail="Automation not found")
+    return template_variables_for_automation(db, automation_id)
 
 
 @router.post("/notification-templates", response_model=NotificationTemplateOut, status_code=status.HTTP_201_CREATED)
@@ -178,6 +190,8 @@ def list_notifications(
     execution_id: int | None = Query(default=None),
     automation_id: int | None = Query(default=None),
     status_filter: str | None = Query(default=None, alias="status"),
+    limit: int = Query(default=25, ge=1, le=200),
+    offset: int = Query(default=0, ge=0),
     db: Session = Depends(get_db),
     _user=Depends(get_current_user),
 ):
@@ -188,7 +202,7 @@ def list_notifications(
         query = query.filter(Notification.automation_id == automation_id)
     if status_filter:
         query = query.filter(Notification.status == status_filter)
-    notifications = query.order_by(Notification.created_at.desc()).limit(200).all()
+    notifications = query.order_by(Notification.created_at.desc()).offset(offset).limit(limit).all()
     return [_notification_out(notification) for notification in notifications]
 
 

@@ -4,6 +4,7 @@ import logging
 import json
 import re
 import unicodedata
+import hashlib
 from datetime import date, datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 from typing import Any
@@ -278,12 +279,57 @@ def _parse_excluded_field_values(prompt: str) -> list[dict[str, Any]]:
             values = _split_prompt_list(match.group("values"))
             if not field or not values:
                 continue
+            if field == "subject" and any(_normalize_prompt_text(item) in {"que estao", "que estejam"} for item in values):
+                continue
             normalized_values = tuple(dict.fromkeys(_normalize_prompt_text(item) for item in values if item.strip()))
             key = (field, normalized_values)
             if normalized_values and key not in seen:
                 seen.add(key)
                 rules.append({"field": field, "operator": "neq", "values": list(values)})
+
+    status_line_patterns = [
+        r"(?:nao|não)\s+(?:trazer|listar|mostrar|exibir|retornar|incluir)\b[^\r\n.]{0,140}?\bstatus\s+(?:de\s+|do\s+|da\s+|com\s+|=|:)?(?P<values>.*?)(?=\s+(?:e\s+tambem|tambem|com\s+dias|dias?\s+em\s+atraso|periodo|colunas?|campos?)|[\r\n.]|$)",
+        r"(?:sem|exceto|excluir|remover)\b[^\r\n.]{0,80}?\bstatus\s+(?:de\s+|do\s+|da\s+|com\s+|=|:)?(?P<values>.*?)(?=\s+(?:e\s+tambem|tambem|com\s+dias|dias?\s+em\s+atraso|periodo|colunas?|campos?)|[\r\n.]|$)",
+    ]
+    for pattern in status_line_patterns:
+        for match in re.finditer(pattern, normalized, flags=re.IGNORECASE):
+            values = _split_prompt_list(match.group("values"))
+            normalized_values = tuple(dict.fromkeys(_normalize_prompt_text(item) for item in values if item.strip()))
+            key = ("status", normalized_values)
+            if normalized_values and key not in seen:
+                seen.add(key)
+                rules.append({"field": "status", "operator": "not_in", "values": list(values)})
     return rules
+
+
+def _parse_prompt_numeric_filters(prompt: str) -> list[dict[str, Any]]:
+    normalized = _normalize_prompt_text(prompt)
+    filters: list[dict[str, Any]] = []
+    max_days_patterns = [
+        r"(?:nao|não)\s+(?:trazer|listar|mostrar|exibir|retornar|incluir)\b[^\r\n.]{0,120}?dias?\s+em\s+atraso[^\r\n.]{0,80}?(?:mais\s+de|maior(?:es)?\s+que|acima\s+de)\s*(\d+)",
+        r"dias?\s+em\s+atraso\s*(?:<=|menor(?:es)?\s+ou\s+igual(?:is)?\s+a|ate|até)\s*(\d+)",
+    ]
+    for pattern in max_days_patterns:
+        match = re.search(pattern, normalized, flags=re.IGNORECASE)
+        if match:
+            filters.append({"field": "days_overdue", "operator": "lte", "values": [match.group(1)]})
+            break
+    return filters
+
+
+def _prompt_fingerprint(prompt: str) -> str:
+    normalized = re.sub(r"\s+", " ", (prompt or "").strip())
+    return hashlib.sha256(normalized.encode("utf-8")).hexdigest()
+
+
+def _cached_prompt_options(defaults: dict[str, Any], prompt: str) -> dict[str, Any] | None:
+    cached = defaults.get("last_prompt_interpretation")
+    if not isinstance(cached, dict):
+        return None
+    if cached.get("prompt_hash") != _prompt_fingerprint(prompt):
+        return None
+    options = cached.get("prompt_options")
+    return options if isinstance(options, dict) else None
 
 
 def _parse_excluded_status_names(prompt: str) -> list[str]:
@@ -604,6 +650,10 @@ def _parse_prompt_filters(prompt: str, defaults: dict[str, Any], connector: Conn
         output["prompt_options"] = {
             **output["prompt_options"],
             "exclude_field_values": excluded_field_values,
+            "prompt_filters": [
+                *(output["prompt_options"].get("prompt_filters") or []),
+                *excluded_field_values,
+            ],
         }
         excluded_status_names = [
             value
@@ -616,6 +666,16 @@ def _parse_prompt_filters(prompt: str, defaults: dict[str, Any], connector: Conn
                 **output["prompt_options"],
                 "exclude_status_names": excluded_status_names,
             }
+
+    numeric_filters = _parse_prompt_numeric_filters(prompt)
+    if numeric_filters:
+        output["prompt_options"] = {
+            **output["prompt_options"],
+            "prompt_filters": [
+                *(output["prompt_options"].get("prompt_filters") or []),
+                *numeric_filters,
+            ],
+        }
 
     output["prompt_options"] = {
         **output["prompt_options"],
@@ -634,11 +694,19 @@ def _parse_prompt_filters(prompt: str, defaults: dict[str, Any], connector: Conn
             }
     except Exception as exc:  # noqa: BLE001
         logger.warning("prompt_interpreter_ai_failed", extra={"error": str(exc)})
+        cached_options = _cached_prompt_options(defaults, prompt)
         output["prompt_options"] = {
             **output["prompt_options"],
             "interpreter": "fallback",
             "interpreter_error": str(exc),
         }
+        if cached_options:
+            output["prompt_options"] = {
+                **cached_options,
+                "interpreter": "cached",
+                "interpreter_source": cached_options.get("interpreter", "gemini"),
+                "interpreter_error": str(exc),
+            }
     else:
         output["prompt_options"] = {
             **output["prompt_options"],
@@ -790,6 +858,16 @@ def run_prompt_report_template(
     db.commit()
     db.refresh(report)
 
+    if (filters.get("prompt_options") or {}).get("interpreter") == "gemini":
+        template.params_json = {
+            **(template.params_json or {}),
+            "last_prompt_interpretation": {
+                "prompt_hash": _prompt_fingerprint(effective_prompt),
+                "prompt_options": filters.get("prompt_options") or {},
+                "updated_at": datetime.now(timezone.utc).isoformat(),
+            },
+        }
+
     template.last_run_at = datetime.now(timezone.utc)
     template.next_run_at = _next_run_for_template(template)
     db.commit()
@@ -818,7 +896,7 @@ def run_prompt_report_template(
             },
         },
     )
-    if trigger == "scheduled":
+    if trigger in {"scheduled", "routine_manual"}:
         _send_prompt_report_notifications(db, template, report, trigger)
     return report, filters
 
