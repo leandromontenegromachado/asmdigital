@@ -3,6 +3,7 @@ import re
 import unicodedata
 from dataclasses import dataclass
 from datetime import datetime
+from difflib import SequenceMatcher
 from io import BytesIO, StringIO
 from typing import Any
 
@@ -383,9 +384,38 @@ class CsvEvaluationImportService:
         return f"{slug or 'avaliado'}@evaluation.asmdigital.com"
 
     @staticmethod
+    def _is_synthetic_email(email: str | None) -> bool:
+        return bool(email and email.strip().lower().endswith("@evaluation.asmdigital.com"))
+
+    @staticmethod
     def _normalize_label(value: str) -> str:
         normalized = unicodedata.normalize("NFKD", value.strip().upper())
         return "".join(char for char in normalized if not unicodedata.combining(char))
+
+    @classmethod
+    def _normalize_lookup(cls, value: str | None) -> str:
+        if not value:
+            return ""
+        return re.sub(r"\s+", " ", cls._normalize_label(value).casefold()).strip()
+
+    @classmethod
+    def _is_probable_same_person(cls, left: str | None, right: str | None) -> bool:
+        left_normalized = cls._normalize_lookup(left)
+        right_normalized = cls._normalize_lookup(right)
+        if not left_normalized or not right_normalized:
+            return False
+        if left_normalized == right_normalized:
+            return True
+
+        left_tokens = set(left_normalized.split())
+        right_tokens = set(right_normalized.split())
+        min_token_count = min(len(left_tokens), len(right_tokens))
+        if min_token_count >= 2 and len(left_tokens & right_tokens) / min_token_count >= 0.85:
+            return True
+
+        compact_left = left_normalized.replace(" ", "")
+        compact_right = right_normalized.replace(" ", "")
+        return SequenceMatcher(None, compact_left, compact_right).ratio() >= 0.88
 
     @staticmethod
     def _parse_datetime(value: str | None) -> datetime | None:
@@ -401,15 +431,39 @@ class CsvEvaluationImportService:
         except ValueError:
             return None
 
-    def _find_or_create_employee(self, email: str | None, name: str | None) -> Employee | None:
-        if not email:
+    def _employee_by_name(self, name: str | None) -> Employee | None:
+        if not name:
             return None
-        employee = self.db.query(Employee).filter(Employee.email == email.lower()).first()
+        employees = self.db.query(Employee).all()
+        for employee in employees:
+            if self._normalize_lookup(employee.name) == self._normalize_lookup(name):
+                return employee
+        for employee in employees:
+            if self._is_probable_same_person(employee.name, name):
+                return employee
+        return None
+
+    def _find_or_create_employee(self, email: str | None, name: str | None) -> Employee | None:
+        if not email and not name:
+            return None
+        normalized_email = email.strip().lower() if email else None
+
+        if self._is_synthetic_email(normalized_email):
+            employee = self._employee_by_name(name)
+            if employee:
+                return employee
+
+        employee = self.db.query(Employee).filter(Employee.email == normalized_email).first() if normalized_email else None
         if employee:
             if name and employee.name != name:
                 employee.name = name
             return employee
-        employee = Employee(name=name or email, email=email.lower(), active=True)
+
+        employee = self._employee_by_name(name)
+        if employee and (not normalized_email or self._is_synthetic_email(normalized_email)):
+            return employee
+
+        employee = Employee(name=name or normalized_email, email=normalized_email or self._synthetic_email(name), active=True)
         self.db.add(employee)
         self.db.flush()
         return employee
