@@ -2,13 +2,20 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from app.api.deps import require_admin
+from app.api.deps import VALID_USER_ROLES, normalize_role, require_admin
 from app.core.security import get_password_hash
 from app.db.session import get_db
 from app.models import User
 from app.schemas.users import UserCreate, UserOut, UserPasswordReset, UserUpdate
 
 router = APIRouter(prefix="/users", tags=["users"])
+
+
+def _validated_role(role: str | None) -> str:
+    raw = (role or "funcionario").strip().lower()
+    if raw not in VALID_USER_ROLES:
+        raise HTTPException(status_code=400, detail="Invalid role")
+    return normalize_role(raw)
 
 
 @router.get("", response_model=list[UserOut])
@@ -37,7 +44,7 @@ def create_user(
         name=payload.name,
         email=payload.email,
         password_hash=get_password_hash(payload.password),
-        role=payload.role,
+        role=_validated_role(payload.role),
         is_active=payload.is_active,
     )
     db.add(user)
@@ -62,6 +69,8 @@ def update_user(
         if email_exists:
             raise HTTPException(status_code=400, detail="Email already exists")
     for key, value in data.items():
+        if key == "role":
+            value = _validated_role(value)
         setattr(user, key, value)
     db.commit()
     db.refresh(user)

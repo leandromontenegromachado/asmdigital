@@ -10,8 +10,19 @@ const defaultForm = {
   name: '',
   email: '',
   password: '',
-  role: 'viewer',
+  role: 'funcionario',
   is_active: true,
+};
+
+const roleOptions = [
+  { value: 'admin', label: 'Administrador', description: 'Acesso completo ao sistema.' },
+  { value: 'gerente', label: 'Gerente', description: 'Inicialmente com as mesmas permissões do administrador.' },
+  { value: 'funcionario', label: 'Funcionário', description: 'Perfil básico para liberação gradual de menus.' },
+];
+
+const roleLabel = (role: string) => {
+  const normalized = role === 'viewer' ? 'funcionario' : role;
+  return roleOptions.find((item) => item.value === normalized)?.label || role;
 };
 
 const UsersPage: React.FC = () => {
@@ -52,7 +63,7 @@ const UsersPage: React.FC = () => {
       name: user.name,
       email: user.email,
       password: '',
-      role: user.role,
+      role: user.role === 'viewer' ? 'funcionario' : user.role,
       is_active: user.is_active,
     });
     setModalOpen(true);
@@ -173,7 +184,7 @@ const UsersPage: React.FC = () => {
                 <tr key={user.id} className="border-t border-slate-100">
                   <td className="px-4 py-3 text-slate-700 font-semibold">{user.name}</td>
                   <td className="px-4 py-3 text-slate-500">{user.email}</td>
-                  <td className="px-4 py-3 text-slate-500">{user.role}</td>
+                  <td className="px-4 py-3 text-slate-500">{roleLabel(user.role)}</td>
                   <td className="px-4 py-3">
                     <StatusBadge status={user.is_active ? 'online' : 'offline'} />
                   </td>
@@ -251,9 +262,15 @@ const UsersPage: React.FC = () => {
                 value={form.role}
                 onChange={(e) => setForm((prev) => ({ ...prev, role: e.target.value }))}
               >
-                <option value="admin">admin</option>
-                <option value="viewer">viewer</option>
+                {roleOptions.map((role) => (
+                  <option key={role.value} value={role.value}>
+                    {role.label}
+                  </option>
+                ))}
               </select>
+              <p className="text-xs text-slate-500">
+                {roleOptions.find((role) => role.value === form.role)?.description || 'Perfil legado convertido para Funcionário ao salvar.'}
+              </p>
             </div>
             <div className="flex flex-col gap-2">
               <label className="text-sm font-semibold text-slate-700">Status</label>

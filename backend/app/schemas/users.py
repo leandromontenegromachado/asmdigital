@@ -20,7 +20,7 @@ class UserCreate(BaseModel):
     name: str
     email: EmailStr
     password: str
-    role: str = "viewer"
+    role: str = "funcionario"
     is_active: bool = True
 
 

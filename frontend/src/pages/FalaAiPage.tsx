@@ -62,7 +62,7 @@ const FalaAiPage: React.FC = () => {
       setCheckins(checkinsData);
       setAdminError(null);
     } catch {
-      setAdminError('Dados administrativos disponiveis apenas para perfil admin.');
+      setAdminError('Dados administrativos disponiveis apenas para perfil administrador ou gerente.');
     }
 
     try {
@@ -105,7 +105,7 @@ const FalaAiPage: React.FC = () => {
       setMessage('Lembrete criado com sucesso.');
       await loadAdminData();
     } catch {
-      setError('Falha ao criar lembrete (requer admin).');
+      setError('Falha ao criar lembrete (requer administrador ou gerente).');
     }
   };
 
@@ -237,7 +237,7 @@ const FalaAiPage: React.FC = () => {
 
       <section className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
         <div className="flex items-center justify-between gap-3">
-          <h2 className="text-sm font-bold text-slate-800">Enquete atual (admin)</h2>
+          <h2 className="text-sm font-bold text-slate-800">Enquete atual (admin/gerente)</h2>
           <button onClick={handleReloadPoll} className="rounded-lg border border-slate-200 px-3 py-2 text-sm font-semibold text-slate-700">Atualizar</button>
         </div>
         {!pollReport ? (
@@ -280,7 +280,7 @@ const FalaAiPage: React.FC = () => {
 
       <section className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
         <div className="flex flex-wrap items-center justify-between gap-2">
-          <h2 className="text-sm font-bold text-slate-800">Historico de enquetes (admin)</h2>
+          <h2 className="text-sm font-bold text-slate-800">Historico de enquetes (admin/gerente)</h2>
           <div className="flex items-center gap-2">
             <input type="date" value={historyDate} onChange={(e) => setHistoryDate(e.target.value)} className="rounded-lg border border-slate-200 px-3 py-2 text-sm" />
             <button onClick={handleFilterHistory} className="rounded-lg border border-slate-200 px-3 py-2 text-sm font-semibold text-slate-700">Filtrar</button>
@@ -319,7 +319,7 @@ const FalaAiPage: React.FC = () => {
       </section>
 
       <section className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
-        <h2 className="text-sm font-bold text-slate-800">Lembretes (admin)</h2>
+        <h2 className="text-sm font-bold text-slate-800">Lembretes (admin/gerente)</h2>
         <div className="mt-3 grid grid-cols-1 gap-2 md:grid-cols-5">
           <input value={newMessage} onChange={(e) => setNewMessage(e.target.value)} className="rounded-lg border border-slate-200 px-3 py-2 text-sm md:col-span-2" placeholder="Mensagem" />
           <input type="time" value={newTime} onChange={(e) => setNewTime(e.target.value)} className="rounded-lg border border-slate-200 px-3 py-2 text-sm" />
@@ -420,7 +420,7 @@ const FalaAiPage: React.FC = () => {
       </section>
 
       <section className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
-        <h2 className="text-sm font-bold text-slate-800">Ultimas respostas (admin)</h2>
+        <h2 className="text-sm font-bold text-slate-800">Ultimas respostas (admin/gerente)</h2>
         <div className="mt-3 overflow-x-auto">
           <table className="min-w-full text-sm">
             <thead className="bg-slate-50 text-slate-600">

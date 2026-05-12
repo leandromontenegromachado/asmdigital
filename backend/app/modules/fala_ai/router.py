@@ -5,7 +5,7 @@ from datetime import date, datetime, timezone
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy.orm import Session
 
-from app.api.deps import get_current_user, require_admin
+from app.api.deps import get_current_user, has_admin_access, require_admin
 from app.db.session import get_db
 from app.models import User
 from app.modules.fala_ai.models import FalaAiLog, FalaAiReminder
@@ -60,7 +60,7 @@ def create_checkin_endpoint(
         db,
         payload,
         actor=current_user,
-        allow_impersonation=current_user.role == "admin",
+        allow_impersonation=has_admin_access(current_user),
     )
 
 
