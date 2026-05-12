@@ -1,112 +1,142 @@
-﻿import React from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { RefreshCw } from 'lucide-react';
 import { AppShell } from '../components/AppShell';
 import { StatCard, StatData } from '../components/StatCard';
 import { ConnectorCard, ConnectorStatus } from '../components/ConnectorCard';
 import { AlertItem, AlertItemData } from '../components/AlertItem';
 import { TimelineItem, AutomationTask } from '../components/TimelineItem';
+import { DashboardSummary, getDashboardSummary } from '../api/dashboard';
 
-const DASHBOARD_STATS: StatData[] = [
-  {
-    title: 'Conectores Ativos',
-    value: '12',
-    total: '/15',
-    trend: 'Estável',
-    trendDirection: 'neutral',
-    icon: 'cable',
-  },
-  {
-    title: 'Alertas Enviados (Hoje)',
-    value: '342',
-    trend: '+12%',
-    trendDirection: 'up',
-    icon: 'bell',
-  },
-  {
-    title: 'Relatórios Pendentes',
-    value: '3',
-    trend: '-2 vs ontem',
-    trendDirection: 'down',
-    icon: 'file',
-  },
-  {
-    title: 'Economia de Tempo (IA)',
-    value: '14h',
-    trend: '+2.5h',
-    trendDirection: 'up',
-    icon: 'star',
-    highlight: true,
-  },
-];
+const connectorProviders: ConnectorStatus['provider'][] = ['aws', 'azure', 'slack', 'jira', 'servicenow'];
+const connectorTypes: ConnectorStatus['type'][] = ['cloud', 'chat', 'task', 'db'];
+const alertTypes: AlertItemData['type'][] = ['critical', 'warning', 'success'];
 
-const CONNECTORS: ConnectorStatus[] = [
-  { id: '1', name: 'AWS', status: 'online', type: 'cloud', provider: 'aws' },
-  { id: '2', name: 'Azure', status: 'online', type: 'cloud', provider: 'azure' },
-  { id: '3', name: 'Slack', status: 'offline', type: 'chat', provider: 'slack' },
-  { id: '4', name: 'Jira', status: 'online', type: 'task', provider: 'jira' },
-  { id: '5', name: 'ServiceNow', status: 'online', type: 'db', provider: 'servicenow' },
-];
+const formatLastUpdate = (value?: string) => {
+  if (!value) return '-';
+  return new Intl.DateTimeFormat('pt-BR', {
+    day: '2-digit',
+    month: '2-digit',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  }).format(new Date(value));
+};
 
-const RECENT_ALERTS: AlertItemData[] = [
-  {
-    id: '1',
-    title: 'Erro de Backup no Servidor DB-01',
-    subtitle: 'Falha na conexão TCP/IP • Cluster A',
-    type: 'critical',
-    timeAgo: '10 min atrás',
-    tag: 'Crítico',
-  },
-  {
-    id: '2',
-    title: 'Uso de CPU elevado',
-    subtitle: 'Instância i-034af acima de 85% por 5m',
-    type: 'warning',
-    timeAgo: '25 min atrás',
-    tag: 'Atenção',
-  },
-  {
-    id: '3',
-    title: 'Deploy automático concluído',
-    subtitle: 'Release v2.4.1 em produção',
-    type: 'success',
-    timeAgo: '1h atrás',
-    tag: 'Sucesso',
-  },
-];
+const formatTimeAgo = (value?: string | null) => {
+  if (!value) return '-';
+  const date = new Date(value);
+  const diffMs = Date.now() - date.getTime();
+  if (Number.isNaN(diffMs)) return '-';
+  const diffMinutes = Math.max(0, Math.floor(diffMs / 60000));
+  if (diffMinutes < 1) return 'agora';
+  if (diffMinutes < 60) return `${diffMinutes} min atrás`;
+  const diffHours = Math.floor(diffMinutes / 60);
+  if (diffHours < 24) return `${diffHours}h atrás`;
+  const diffDays = Math.floor(diffHours / 24);
+  return `${diffDays}d atrás`;
+};
 
-const UPCOMING_AUTOMATIONS: AutomationTask[] = [
-  {
-    id: '1',
-    time: '14:00',
-    title: 'Gerar Relatório Semanal',
-    subtitle: 'Enviar para Gestão de TI',
-    status: 'upcoming',
-    isNext: true,
-  },
-  {
-    id: '2',
-    time: '14:30',
-    title: 'Limpeza de Cache',
-    subtitle: 'Servidores de Aplicação',
-    status: 'pending',
-  },
-  {
-    id: '3',
-    time: '16:00',
-    title: 'Sincronização LDAP',
-    subtitle: 'Atualização de usuários',
-    status: 'pending',
-  },
-  {
-    id: '4',
-    time: '18:00',
-    title: 'Verificação de Segurança',
-    subtitle: 'Scan de vulnerabilidades',
-    status: 'pending',
-  },
-];
+const buildStats = (summary?: DashboardSummary): StatData[] => {
+  const stats = summary?.stats;
+  const notificationDelta = (stats?.notifications_today || 0) - (stats?.notifications_yesterday || 0);
+  const inactiveConnectors = Math.max((stats?.total_connectors || 0) - (stats?.active_connectors || 0), 0);
+
+  return [
+    {
+      title: 'Conectores Ativos',
+      value: stats?.active_connectors ?? 0,
+      total: `/${stats?.total_connectors ?? 0}`,
+      trend: inactiveConnectors ? `${inactiveConnectors} inativo(s)` : 'Tudo ativo',
+      trendDirection: inactiveConnectors ? 'down' : 'neutral',
+      icon: 'cable',
+    },
+    {
+      title: 'Notificações Hoje',
+      value: stats?.notifications_today ?? 0,
+      trend: `${notificationDelta >= 0 ? '+' : ''}${notificationDelta} vs ontem`,
+      trendDirection: notificationDelta > 0 ? 'up' : notificationDelta < 0 ? 'down' : 'neutral',
+      icon: 'bell',
+    },
+    {
+      title: 'Relatórios Pendentes',
+      value: stats?.pending_reports ?? 0,
+      trend: `${stats?.pending_reports ?? 0} em aberto`,
+      trendDirection: (stats?.pending_reports || 0) > 0 ? 'down' : 'neutral',
+      icon: 'file',
+    },
+    {
+      title: 'Rotinas Ativas',
+      value: stats?.active_automations ?? 0,
+      trend: 'Agendadas',
+      trendDirection: 'neutral',
+      icon: 'star',
+      highlight: true,
+    },
+  ];
+};
 
 const DashboardPage: React.FC = () => {
+  const [summary, setSummary] = useState<DashboardSummary | undefined>();
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  const loadDashboard = async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const data = await getDashboardSummary();
+      setSummary(data);
+    } catch {
+      setError('Não foi possível carregar os dados reais da visão geral.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    loadDashboard();
+  }, []);
+
+  const dashboardStats = useMemo(() => buildStats(summary), [summary]);
+
+  const connectors: ConnectorStatus[] = useMemo(
+    () =>
+      (summary?.connectors || []).map((connector) => ({
+        id: connector.id,
+        name: connector.name,
+        status: connector.status === 'offline' ? 'offline' : 'online',
+        type: connectorTypes.includes(connector.type as ConnectorStatus['type']) ? (connector.type as ConnectorStatus['type']) : 'cloud',
+        provider: connectorProviders.includes(connector.provider as ConnectorStatus['provider']) ? (connector.provider as ConnectorStatus['provider']) : 'aws',
+      })),
+    [summary]
+  );
+
+  const recentAlerts: AlertItemData[] = useMemo(
+    () =>
+      (summary?.recent_alerts || []).map((alert) => ({
+        id: alert.id,
+        title: alert.title,
+        subtitle: alert.subtitle,
+        type: alertTypes.includes(alert.type as AlertItemData['type']) ? (alert.type as AlertItemData['type']) : 'warning',
+        tag: alert.tag,
+        timeAgo: formatTimeAgo(alert.created_at),
+      })),
+    [summary]
+  );
+
+  const upcomingAutomations: AutomationTask[] = useMemo(
+    () =>
+      (summary?.upcoming_automations || []).map((task) => ({
+        id: task.id,
+        time: task.time,
+        title: task.title,
+        subtitle: task.subtitle,
+        status: task.status === 'pending' ? 'pending' : 'upcoming',
+        isNext: task.is_next,
+      })),
+    [summary]
+  );
+
   return (
     <AppShell>
       <header className="flex flex-col md:flex-row md:items-center justify-between gap-4">
@@ -114,17 +144,23 @@ const DashboardPage: React.FC = () => {
           <h2 className="text-3xl font-black tracking-tight text-slate-900 sm:text-4xl">Visão Geral</h2>
           <p className="text-slate-500">Acompanhe o desempenho das suas automações em tempo real.</p>
         </div>
-        <div className="flex items-center gap-3">
-          <span className="text-sm text-slate-500 font-medium">Última atualização: Hoje, 14:00</span>
-          <button className="flex items-center justify-center gap-2 rounded-lg bg-primary px-4 py-2.5 text-sm font-bold text-white shadow-lg shadow-blue-200 hover:bg-primary-dark transition-colors">
-            <RefreshCw size={18} />
-            <span>Atualizar dados</span>
+        <div className="flex flex-col sm:flex-row sm:items-center gap-3">
+          <span className="text-sm text-slate-500 font-medium">Última atualização: {formatLastUpdate(summary?.generated_at)}</span>
+          <button
+            onClick={loadDashboard}
+            disabled={loading}
+            className="flex items-center justify-center gap-2 rounded-lg bg-primary px-4 py-2.5 text-sm font-bold text-white shadow-lg shadow-blue-200 hover:bg-primary-dark disabled:cursor-not-allowed disabled:opacity-70 transition-colors"
+          >
+            <RefreshCw size={18} className={loading ? 'animate-spin' : ''} />
+            <span>{loading ? 'Atualizando...' : 'Atualizar dados'}</span>
           </button>
         </div>
       </header>
 
+      {error && <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm font-medium text-red-700">{error}</div>}
+
       <section className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
-        {DASHBOARD_STATS.map((stat, index) => (
+        {dashboardStats.map((stat, index) => (
           <StatCard key={index} data={stat} />
         ))}
       </section>
@@ -132,14 +168,15 @@ const DashboardPage: React.FC = () => {
       <section>
         <div className="flex items-center justify-between mb-4">
           <h3 className="text-lg font-bold text-slate-900">Status dos Conectores</h3>
-          <a href="#" className="text-sm font-medium text-primary hover:text-primary-dark hover:underline transition-all">
+          <a href="/connectors" className="text-sm font-medium text-primary hover:text-primary-dark hover:underline transition-all">
             Ver todos
           </a>
         </div>
         <div className="flex flex-wrap gap-3">
-          {CONNECTORS.map((connector) => (
+          {connectors.map((connector) => (
             <ConnectorCard key={connector.id} connector={connector} />
           ))}
+          {!loading && connectors.length === 0 && <p className="text-sm text-slate-500">Nenhum conector cadastrado.</p>}
         </div>
       </section>
 
@@ -147,16 +184,12 @@ const DashboardPage: React.FC = () => {
         <div className="lg:col-span-2 flex flex-col gap-4">
           <div className="flex items-center justify-between">
             <h3 className="text-lg font-bold text-slate-900">Alertas Recentes</h3>
-            <div className="flex gap-2">
-              <button className="text-xs font-bold text-slate-500 hover:text-primary transition-colors bg-white px-3 py-1 rounded-md border border-slate-200 shadow-sm">
-                Filtrar
-              </button>
-            </div>
           </div>
           <div className="rounded-xl border border-slate-200 bg-white shadow-sm overflow-hidden">
-            {RECENT_ALERTS.map((alert) => (
+            {recentAlerts.map((alert) => (
               <AlertItem key={alert.id} alert={alert} />
             ))}
+            {!loading && recentAlerts.length === 0 && <p className="p-4 text-sm text-slate-500">Nenhuma notificação recente encontrada.</p>}
           </div>
         </div>
 
@@ -164,13 +197,17 @@ const DashboardPage: React.FC = () => {
           <h3 className="text-lg font-bold text-slate-900">Próximas Automações</h3>
           <div className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm h-full flex flex-col">
             <div className="relative flex flex-col gap-0 border-l border-slate-200 ml-2 flex-1">
-              {UPCOMING_AUTOMATIONS.map((task, index) => (
-                <TimelineItem key={task.id} task={task} isLast={index === UPCOMING_AUTOMATIONS.length - 1} />
+              {upcomingAutomations.map((task, index) => (
+                <TimelineItem key={task.id} task={task} isLast={index === upcomingAutomations.length - 1} />
               ))}
+              {!loading && upcomingAutomations.length === 0 && <p className="pl-6 text-sm text-slate-500">Nenhuma automação agendada.</p>}
             </div>
-            <button className="mt-6 w-full rounded-lg border border-slate-200 bg-white py-2.5 text-sm font-bold text-slate-600 hover:bg-slate-50 hover:text-primary transition-colors shadow-sm">
+            <a
+              href="/routines"
+              className="mt-6 w-full rounded-lg border border-slate-200 bg-white py-2.5 text-center text-sm font-bold text-slate-600 hover:bg-slate-50 hover:text-primary transition-colors shadow-sm"
+            >
               Ver Agenda Completa
-            </button>
+            </a>
           </div>
         </div>
       </div>

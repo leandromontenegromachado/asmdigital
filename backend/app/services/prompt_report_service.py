@@ -818,7 +818,7 @@ def run_prompt_report_template(
             },
         },
     )
-    if not trigger.startswith("automation:"):
+    if trigger == "scheduled":
         _send_prompt_report_notifications(db, template, report, trigger)
     return report, filters
 
