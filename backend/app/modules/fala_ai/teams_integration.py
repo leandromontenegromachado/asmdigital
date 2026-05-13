@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hmac
 import hashlib
+import time
 from collections.abc import Mapping
 from typing import Any
 import unicodedata
@@ -153,12 +154,25 @@ def _send_botframework_message(
         "text": message,
         "from": {"id": bot_id or app_id},
     }
-    response = httpx.post(
-        url,
-        headers={"Authorization": f"Bearer {token}"},
-        json=payload,
-        timeout=20,
-    )
+    last_error: httpx.HTTPError | None = None
+    for attempt in range(3):
+        try:
+            response = httpx.post(
+                url,
+                headers={"Authorization": f"Bearer {token}"},
+                json=payload,
+                timeout=20,
+            )
+            break
+        except httpx.HTTPError as exc:
+            last_error = exc
+            if attempt == 2:
+                raise
+            time.sleep(1.5 * (attempt + 1))
+    else:
+        if last_error:
+            raise last_error
+        raise RuntimeError("Bot Framework delivery failed")
     response.raise_for_status()
 
 

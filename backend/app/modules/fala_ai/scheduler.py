@@ -94,10 +94,16 @@ def _send_reminder(reminder_id: int) -> None:
                 bot_id=context.get("bot_id"),
             )
             payload["delivery_source"] = context.get("source")
-        except RuntimeError:
+        except RuntimeError as exc:
             # Sem canal configurado; apenas registra log.
             payload["delivery_source"] = context.get("source")
             payload["delivery_skipped"] = True
+            payload["delivery_error"] = str(exc)
+        except Exception as exc:  # noqa: BLE001
+            payload["delivery_source"] = context.get("source")
+            payload["delivery_failed"] = True
+            payload["delivery_error"] = str(exc)
+            logger.warning("fala_ai_reminder_delivery_failed", extra={"reminder_id": reminder.id, "error": str(exc)})
 
         payload["dispatch_id"] = dispatch_id
         payload["sent_at"] = datetime.now(timezone.utc).isoformat()
@@ -138,9 +144,15 @@ def _notify_missing_checkins() -> None:
                 bot_id=context.get("bot_id"),
             )
             delivery_source = context.get("source")
-        except RuntimeError:
+            delivery_error = None
+        except RuntimeError as exc:
             # Sem canal configurado; apenas registra log.
             delivery_source = context.get("source")
+            delivery_error = str(exc)
+        except Exception as exc:  # noqa: BLE001
+            delivery_source = context.get("source")
+            delivery_error = str(exc)
+            logger.warning("fala_ai_missing_checkins_delivery_failed", extra={"error": str(exc)})
 
         register_log(
             db,
@@ -150,6 +162,7 @@ def _notify_missing_checkins() -> None:
                 "missing_total": len(report.missing_users),
                 "checked_in_total": len(report.checked_in_users),
                 "delivery_source": delivery_source,
+                "delivery_error": delivery_error,
             },
         )
 
