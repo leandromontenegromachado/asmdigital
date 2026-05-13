@@ -606,13 +606,22 @@ def _send_automation_email(automation: Automation, run: AutomationRun, task_resu
     with smtplib.SMTP(settings.smtp_host, settings.smtp_port, timeout=20) as smtp:
         if settings.smtp_use_tls:
             smtp.starttls()
-        smtp_username = settings.smtp_username or settings.smtp_user
-        smtp_password = settings.smtp_password or settings.smtp_pass
+        smtp_username = _clean_smtp_secret(settings.smtp_username or settings.smtp_user)
+        smtp_password = _clean_smtp_secret(settings.smtp_password or settings.smtp_pass)
         if smtp_username and smtp_password:
             smtp.login(smtp_username, smtp_password)
         smtp.send_message(message)
 
     return {"status": "sent", "to": email_to, "run_url": run_url, "report_links": report_links}
+
+
+def _clean_smtp_secret(value: str | None) -> str | None:
+    if value is None:
+        return None
+    cleaned = value.strip()
+    if len(cleaned) >= 2 and cleaned[0] == cleaned[-1] and cleaned[0] in {"'", '"'}:
+        cleaned = cleaned[1:-1].strip()
+    return cleaned or None
 
 
 def run_automation(db: Session, automation: Automation, simulation: bool = False) -> AutomationRun:
