@@ -902,9 +902,7 @@ def run_prompt_report_template(
 
 
 def _send_prompt_report_notifications(db: Session, template: PromptReportTemplate, report: Report, trigger: str) -> None:
-    automation = db.query(Automation).filter(Automation.key == f"prompt_report_template_{template.id}").first()
-    if not automation:
-        return
+    automation = _ensure_prompt_report_automation(db, template)
 
     run = AutomationRun(
         automation_id=automation.id,
@@ -953,6 +951,36 @@ def _send_prompt_report_notifications(db: Session, template: PromptReportTemplat
             "prompt_report_notifications_failed",
             extra={"template_id": template.id, "report_id": report.id, "automation_id": automation.id, "error": str(exc)},
         )
+
+
+def _ensure_prompt_report_automation(db: Session, template: PromptReportTemplate) -> Automation:
+    key = f"prompt_report_template_{template.id}"
+    params_json = {
+        "simulation": False,
+        "source": "prompt_report_template",
+        "prompt_report": {"template_id": template.id},
+        "tasks": [f"prompt_report:{template.id}"],
+    }
+    automation = db.query(Automation).filter(Automation.key == key).first()
+    if automation:
+        automation.name = template.name
+        automation.is_enabled = template.is_enabled
+        automation.schedule_cron = None
+        automation.next_run_at = None
+        automation.params_json = params_json
+        db.flush()
+        return automation
+
+    automation = Automation(
+        key=key,
+        name=template.name,
+        schedule_cron=None,
+        is_enabled=template.is_enabled,
+        params_json=params_json,
+    )
+    db.add(automation)
+    db.flush()
+    return automation
 
 
 def sync_prompt_report_jobs(db: Session, scheduler: BaseScheduler) -> None:
