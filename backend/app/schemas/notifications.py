@@ -6,6 +6,7 @@ from pydantic import BaseModel, Field
 
 class NotificationTemplateBase(BaseModel):
     name: str = Field(min_length=2, max_length=200)
+    variable_automation_id: int | None = None
     channel: str = "email"
     subject: str | None = None
     body: str = Field(min_length=1)
@@ -18,6 +19,7 @@ class NotificationTemplateCreate(NotificationTemplateBase):
 
 class NotificationTemplateUpdate(BaseModel):
     name: str | None = Field(default=None, min_length=2, max_length=200)
+    variable_automation_id: int | None = None
     channel: str | None = None
     subject: str | None = None
     body: str | None = Field(default=None, min_length=1)

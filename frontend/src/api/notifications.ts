@@ -3,6 +3,7 @@ import api from './client';
 export interface NotificationTemplate {
   id: number;
   name: string;
+  variable_automation_id?: number | null;
   channel: string;
   subject: string | null;
   body: string;

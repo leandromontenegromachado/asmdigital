@@ -36,6 +36,14 @@ def _template_out(template: NotificationTemplate) -> NotificationTemplateOut:
     return NotificationTemplateOut.model_validate(template)
 
 
+def _validate_template_variable_automation(db: Session, automation_id: int | None) -> None:
+    if automation_id is None:
+        return
+    automation = db.query(Automation).filter(Automation.id == automation_id).first()
+    if not automation:
+        raise HTTPException(status_code=404, detail="Variable automation not found")
+
+
 def _rule_out(rule: NotificationRule) -> NotificationRuleOut:
     return NotificationRuleOut(
         id=rule.id,
@@ -98,6 +106,7 @@ def list_template_variables(
 
 @router.post("/notification-templates", response_model=NotificationTemplateOut, status_code=status.HTTP_201_CREATED)
 def create_template(payload: NotificationTemplateCreate, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    _validate_template_variable_automation(db, payload.variable_automation_id)
     template = NotificationTemplate(**payload.model_dump())
     db.add(template)
     db.flush()
@@ -113,6 +122,7 @@ def update_template(template_id: int, payload: NotificationTemplateUpdate, db: S
     if not template:
         raise HTTPException(status_code=404, detail="Template not found")
     data = payload.model_dump(exclude_unset=True)
+    _validate_template_variable_automation(db, data.get("variable_automation_id"))
     old = {key: getattr(template, key) for key in data}
     for key, value in data.items():
         setattr(template, key, value)

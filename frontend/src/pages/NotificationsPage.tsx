@@ -26,6 +26,7 @@ import {
 const defaultTemplate = {
   id: null as number | null,
   name: 'Pendencia por responsavel',
+  variable_automation_id: '',
   channel: 'email',
   subject: 'ASMDIGITAL - Pendencia da rotina {{nome_rotina}}',
   body: 'Ola, {{nome_responsavel}}.\n\nA rotina "{{nome_rotina}}" identificou uma pendencia relacionada ao projeto "{{nome_projeto}}".\n\nStatus: {{status}}\nDias em atraso: {{dias_atraso}}\nData da execucao: {{data_execucao}}\n\nAcao sugerida:\n{{acao_sugerida}}\n\nAcesse o relatorio completo em:\n{{link_relatorio}}',
@@ -183,30 +184,37 @@ const NotificationsPage: React.FC = () => {
 
   const clearTemplate = () => {
     setTemplateForm({ ...defaultTemplate, id: null });
+    setVariableAutomationId('');
     setTemplateEditorOpen(true);
   };
 
   const editTemplate = (template: NotificationTemplate) => {
+    const mappingAutomationId = template.variable_automation_id ? String(template.variable_automation_id) : '';
     setTemplateForm({
       id: template.id,
       name: template.name,
+      variable_automation_id: mappingAutomationId,
       channel: template.channel,
       subject: template.subject || '',
       body: template.body,
       is_active: template.is_active,
     });
+    setVariableAutomationId(mappingAutomationId);
     setTemplateEditorOpen(true);
   };
 
   const duplicateTemplate = (template: NotificationTemplate) => {
+    const mappingAutomationId = template.variable_automation_id ? String(template.variable_automation_id) : '';
     setTemplateForm({
       id: null,
       name: `${template.name} - copia`,
+      variable_automation_id: mappingAutomationId,
       channel: template.channel,
       subject: template.subject || '',
       body: template.body,
       is_active: template.is_active,
     });
+    setVariableAutomationId(mappingAutomationId);
     setTemplateEditorOpen(true);
   };
 
@@ -233,6 +241,7 @@ const NotificationsPage: React.FC = () => {
     try {
       const payload = {
         name: templateForm.name.trim(),
+        variable_automation_id: variableAutomationId ? Number(variableAutomationId) : null,
         channel: templateForm.channel,
         subject: templateForm.subject || null,
         body: templateForm.body,
@@ -251,11 +260,13 @@ const NotificationsPage: React.FC = () => {
       setTemplateForm({
         id: saved.id,
         name: saved.name,
+        variable_automation_id: saved.variable_automation_id ? String(saved.variable_automation_id) : '',
         channel: saved.channel,
         subject: saved.subject || '',
         body: saved.body,
         is_active: saved.is_active,
       });
+      setVariableAutomationId(saved.variable_automation_id ? String(saved.variable_automation_id) : '');
       setNotice(`Template "${saved.name}" salvo.`);
       await load();
       setTemplateEditorOpen(false);
@@ -1026,7 +1037,10 @@ const NotificationsPage: React.FC = () => {
                   <select
                     className="mt-1 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-normal"
                     value={variableAutomationId}
-                    onChange={(event) => setVariableAutomationId(event.target.value)}
+                    onChange={(event) => {
+                      setVariableAutomationId(event.target.value);
+                      setTemplateForm({ ...templateForm, variable_automation_id: event.target.value });
+                    }}
                   >
                     <option value="">Escolha uma rotina</option>
                     {automations.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}

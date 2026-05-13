@@ -261,12 +261,15 @@ class NotificationTemplate(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     name = Column(String(200), nullable=False)
+    variable_automation_id = Column(Integer, ForeignKey("automations.id"), nullable=True, index=True)
     channel = Column(String(40), nullable=False, default="email")
     subject = Column(String(200), nullable=True)
     body = Column(Text, nullable=False)
     is_active = Column(Boolean, nullable=False, default=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
+
+    variable_automation = relationship("Automation", foreign_keys=[variable_automation_id])
 
 
 class NotificationRule(Base):
