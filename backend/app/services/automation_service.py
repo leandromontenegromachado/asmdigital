@@ -606,8 +606,10 @@ def _send_automation_email(automation: Automation, run: AutomationRun, task_resu
     with smtplib.SMTP(settings.smtp_host, settings.smtp_port, timeout=20) as smtp:
         if settings.smtp_use_tls:
             smtp.starttls()
-        if settings.smtp_username and settings.smtp_password:
-            smtp.login(settings.smtp_username, settings.smtp_password)
+        smtp_username = settings.smtp_username or settings.smtp_user
+        smtp_password = settings.smtp_password or settings.smtp_pass
+        if smtp_username and smtp_password:
+            smtp.login(smtp_username, smtp_password)
         smtp.send_message(message)
 
     return {"status": "sent", "to": email_to, "run_url": run_url, "report_links": report_links}

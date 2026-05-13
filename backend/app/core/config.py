@@ -26,7 +26,9 @@ class Settings(BaseSettings):
     smtp_host: str | None = None
     smtp_port: int = 587
     smtp_username: str | None = None
+    smtp_user: str | None = None
     smtp_password: str | None = None
+    smtp_pass: str | None = None
     smtp_from: str = "asmdigital@company.com"
     smtp_use_tls: bool = True
 
