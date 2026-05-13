@@ -288,6 +288,11 @@ export default function EvaluationImportsPage() {
           : await uploadRhFile(cycleId, selectedFile);
       const label = kind === 'rpm' ? 'RPM' : kind === 'ihpe' ? 'IHPE' : 'RH';
       setMessage(`${label} importado: ${result.imported_rows} linhas lidas, ${result.updated_indicators || result.updated_rh_records} registro(s) atualizados.`);
+      const loadedImports = await listEvaluationImports(cycleId);
+      setImports(loadedImports);
+      if (result.import_id) {
+        setSelectedImportId(result.import_id);
+      }
     } catch (error: any) {
       setMessage(error?.response?.data?.detail || 'Erro ao importar planilha operacional.');
     } finally {

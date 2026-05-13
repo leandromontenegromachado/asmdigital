@@ -131,6 +131,7 @@ class OperationalImportOut(BaseModel):
     updated_indicators: int = 0
     updated_rh_records: int = 0
     warnings: list[str] = []
+    import_id: int | None = None
 
 
 class EmployeeRhDataOut(BaseModel):

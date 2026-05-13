@@ -182,6 +182,7 @@ export interface OperationalImportResult {
   updated_indicators: number;
   updated_rh_records: number;
   warnings: string[];
+  import_id?: number | null;
 }
 
 export interface AiFeedbackAnalysis {

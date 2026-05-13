@@ -8,7 +8,7 @@ from typing import Any
 from openpyxl import load_workbook
 from sqlalchemy.orm import Session
 
-from app.models import Employee, EmployeeRhData, PerformanceIndicator
+from app.models import Employee, EmployeeRhData, EvaluationImport, EvaluationImportRow, PerformanceIndicator
 from app.services.evaluation_scoring_service import EvaluationScoringService
 
 
@@ -27,6 +27,7 @@ class OperationalImportSummary:
     updated_indicators: int = 0
     updated_rh_records: int = 0
     warnings: list[str] = field(default_factory=list)
+    import_id: int | None = None
 
 
 class EvaluationOperationalImportService:
@@ -37,6 +38,8 @@ class EvaluationOperationalImportService:
     def import_rpm(self, cycle_id: int, file_name: str, content: bytes) -> OperationalImportSummary:
         rows = self._read_xlsx(content)
         summary = OperationalImportSummary(imported_rows=len(rows))
+        import_record = self._register_import(cycle_id, file_name, "rpm", rows)
+        summary.import_id = import_record.id
         totals: dict[int, dict[str, float]] = {}
         for row in rows:
             name = self._pick(row, ["colaborador", "funcionario", "nome", "recurso", "pessoa"])
@@ -60,6 +63,8 @@ class EvaluationOperationalImportService:
     def import_ihpe(self, cycle_id: int, file_name: str, content: bytes) -> OperationalImportSummary:
         rows = self._read_xlsx(content)
         summary = OperationalImportSummary(imported_rows=len(rows))
+        import_record = self._register_import(cycle_id, file_name, "ihpe", rows)
+        summary.import_id = import_record.id
         monthly: dict[int, dict[str, dict[str, float]]] = {}
         current_month: str | None = None
         for row in rows:
@@ -101,6 +106,8 @@ class EvaluationOperationalImportService:
     def import_rh(self, cycle_id: int, file_name: str, content: bytes) -> OperationalImportSummary:
         rows = self._read_xlsx(content)
         summary = OperationalImportSummary(imported_rows=len(rows))
+        import_record = self._register_import(cycle_id, file_name, "rh", rows)
+        summary.import_id = import_record.id
         today = date.today()
         for row in rows:
             name = self._pick(row, ["colaborador", "funcionario", "nome", "recurso", "pessoa"])
@@ -135,6 +142,33 @@ class EvaluationOperationalImportService:
             rh.raw_data_json = self._json_safe_row(row)
             summary.updated_rh_records += 1
         return summary
+
+    def _register_import(self, cycle_id: int, file_name: str, kind: str, rows: list[dict[str, Any]]) -> EvaluationImport:
+        import_record = EvaluationImport(
+            cycle_id=cycle_id,
+            file_name=f"[{kind.upper()}] {file_name}",
+            status="IMPORTED",
+            uploaded_by=self.actor_id,
+            column_mapping_json={"type": kind, "source": "operational_import"},
+            total_rows=len(rows),
+            valid_rows=len(rows),
+            invalid_rows=0,
+            error_message=None,
+        )
+        self.db.add(import_record)
+        self.db.flush()
+        for index, row in enumerate(rows, start=1):
+            self.db.add(
+                EvaluationImportRow(
+                    import_id=import_record.id,
+                    row_number=index,
+                    raw_data_json=self._json_safe_row(row),
+                    normalized_data_json={"type": kind},
+                    status="IMPORTED",
+                    error_message=None,
+                )
+            )
+        return import_record
 
     def _upsert_indicator(self, cycle_id: int, employee_id: int, rpm: float | None, ihpe: float | None) -> None:
         indicator = (
