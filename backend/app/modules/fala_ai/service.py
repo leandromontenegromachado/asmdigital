@@ -13,6 +13,7 @@ from app.modules.fala_ai.assistant import build_assistant_answer
 from app.modules.fala_ai.models import FalaAiCheckin, FalaAiLog, FalaAiReminder
 from app.modules.fala_ai.schemas import FalaAiCheckinCreate, FalaAiDailyReportOut, FalaAiDailyUserStatus
 from app.modules.fala_ai.teams_integration import extract_teams_identity
+from app.services.ai_model_service import resolve_ai_model
 
 
 BOT_OPENERS = [
@@ -184,8 +185,8 @@ def delete_reminder(db: Session, reminder: FalaAiReminder) -> None:
     db.commit()
 
 
-def build_bot_reply(mensagem: str) -> str:
-    return build_assistant_answer(mensagem or "")
+def build_bot_reply(mensagem: str, db: Session | None = None) -> str:
+    return build_assistant_answer(mensagem or "", model=resolve_ai_model(db, "chefia"))
 
 
 def _normalize_text(value: str) -> str:
@@ -535,7 +536,11 @@ def process_teams_webhook_payload(db: Session, payload: dict[str, Any]) -> tuple
     if not should_checkin:
         # Non-checkin message: treat as question to assistant bot.
         if activity_type == "message":
-            assistant_reply = build_assistant_answer(identity.get("message") or "", user_name=getattr(user, "name", None))
+            assistant_reply = build_assistant_answer(
+                identity.get("message") or "",
+                user_name=getattr(user, "name", None),
+                model=resolve_ai_model(db, "chefia"),
+            )
             register_log(
                 db,
                 "teams_question_answered",

@@ -1,5 +1,6 @@
 import json
 import time
+from json import JSONDecodeError
 from typing import Any
 
 import httpx
@@ -17,6 +18,7 @@ from app.models import (
     PotentialScore,
     Review360,
 )
+from app.services.ai_model_service import generate_ai_text, resolve_ai_model
 from app.services.evaluation_scoring_service import BEHAVIOR_WEIGHTS
 
 
@@ -158,7 +160,7 @@ class AiFeedbackAnalysisService:
 
         prompt = self.build_prompt(cycle, employee)
         try:
-            payload = self._call_ai(prompt, employee)
+            payload, model_used = self._call_ai(prompt, employee)
             validated = self.validate_ai_json(payload)
             analysis.status = "PROCESSED"
             analysis.summary = validated["summary"]
@@ -168,7 +170,7 @@ class AiFeedbackAnalysisService:
             analysis.qualitative_alerts_json = validated["qualitative_alerts"]
             analysis.suggested_feedback = validated["suggested_feedback"]
             analysis.raw_response_json = validated
-            analysis.model_used = settings.fala_ai_gemini_model if settings.fala_ai_gemini_api_key else "deterministic-fallback"
+            analysis.model_used = model_used
             analysis.error_message = None
         except httpx.HTTPStatusError as exc:
             fallback = self._fallback_analysis(employee, cycle.id)
@@ -185,9 +187,20 @@ class AiFeedbackAnalysisService:
                 f"Aviso: a IA externa excedeu o tempo limite de {settings.fala_ai_gemini_timeout_seconds}s. "
                 "Foi exibida analise local de apoio com os dados disponiveis."
             )
+        except (JSONDecodeError, ValueError) as exc:
+            fallback = self._fallback_analysis(employee, cycle.id)
+            self._apply_fallback(analysis, fallback, {"provider_parse_error": self._safe_error_message(exc)})
+            analysis.error_message = (
+                "Aviso: a IA externa respondeu fora do formato JSON esperado. "
+                "Foi exibida analise local de apoio com os dados disponiveis."
+            )
         except Exception as exc:
-            analysis.status = "ERROR"
-            analysis.error_message = self._safe_error_message(exc)
+            fallback = self._fallback_analysis(employee, cycle.id)
+            self._apply_fallback(analysis, fallback, {"provider_error": self._safe_error_message(exc)})
+            analysis.error_message = (
+                "Aviso: a IA externa ficou indisponivel temporariamente. "
+                "Foi exibida analise local de apoio com os dados disponiveis."
+            )
 
         self.db.add(AuditLog(
             user_id=self.actor_id,
@@ -227,30 +240,24 @@ class AiFeedbackAnalysisService:
             raise ValueError("Resumo e feedback sugerido precisam ser texto")
         return payload
 
-    def _call_ai(self, prompt: str, employee: Employee) -> dict[str, Any]:
-        if not settings.fala_ai_gemini_api_key:
-            return self._fallback_analysis(employee)
+    def _call_ai(self, prompt: str, employee: Employee) -> tuple[dict[str, Any], str]:
+        model = resolve_ai_model(self.db, "evaluation")
+        if not model.api_key or not model.provider_supported:
+            return self._fallback_analysis(employee), "deterministic-fallback"
 
         last_error: httpx.HTTPStatusError | None = None
         for attempt, delay in enumerate([0.0] + AI_RETRY_DELAYS_SECONDS, start=1):
             if delay:
                 time.sleep(delay)
-            response = httpx.post(
-                f"https://generativelanguage.googleapis.com/v1beta/models/{settings.fala_ai_gemini_model}:generateContent",
-                headers={"x-goog-api-key": settings.fala_ai_gemini_api_key},
-                json={
-                    "system_instruction": {"parts": [{"text": "Retorne somente JSON valido. Nao defina nota, categoria ou decisao final."}]},
-                    "contents": [{"parts": [{"text": prompt}]}],
-                    "generationConfig": {
-                        "temperature": 0.2,
-                        "maxOutputTokens": 2500,
-                        "responseMimeType": "application/json",
-                    },
-                },
-                timeout=settings.fala_ai_gemini_timeout_seconds,
-            )
             try:
-                response.raise_for_status()
+                text = generate_ai_text(
+                    model,
+                    system_instruction="Retorne somente JSON valido. Nao defina nota, categoria ou decisao final.",
+                    prompt=prompt,
+                    temperature=0.2,
+                    max_tokens=2500,
+                    json_response=True,
+                )
                 break
             except httpx.HTTPStatusError as exc:
                 last_error = exc
@@ -260,14 +267,7 @@ class AiFeedbackAnalysisService:
             if last_error:
                 raise last_error
             raise RuntimeError("Falha desconhecida ao chamar Gemini")
-        data = response.json()
-        text = (
-            (data.get("candidates") or [{}])[0]
-            .get("content", {})
-            .get("parts", [{}])[0]
-            .get("text", "")
-        )
-        return json.loads(self._extract_json(text))
+        return json.loads(self._extract_json(text)), model.model_id
 
     @staticmethod
     def _extract_json(text: str) -> str:

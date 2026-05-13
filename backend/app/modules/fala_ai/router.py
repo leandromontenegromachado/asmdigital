@@ -250,5 +250,9 @@ async def teams_webhook_endpoint(request: Request, db: Session = Depends(get_db)
 
 
 @router.post("/reply", response_model=FalaAiBotReplyOut)
-def bot_reply_endpoint(payload: FalaAiBotReplyIn, _user: User = Depends(get_current_user)):
-    return FalaAiBotReplyOut(resposta=build_bot_reply(payload.mensagem))
+def bot_reply_endpoint(
+    payload: FalaAiBotReplyIn,
+    db: Session = Depends(get_db),
+    _user: User = Depends(get_current_user),
+):
+    return FalaAiBotReplyOut(resposta=build_bot_reply(payload.mensagem, db=db))

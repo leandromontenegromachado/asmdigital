@@ -19,6 +19,7 @@ from app.core.config import settings
 from app.adapters.redmine import RedmineAdapter
 from app.db.session import SessionLocal
 from app.models import Automation, AutomationRun, Connector, PromptReportTemplate, Report
+from app.services.ai_model_service import generate_ai_text, resolve_ai_model
 from app.services.management_event_service import register_management_event_safe
 from app.services.notification_service import send_notifications_for_automation_run
 from app.services.report_service import generate_redmine_report
@@ -430,41 +431,27 @@ def _json_safe(value: Any) -> Any:
     return value
 
 
-def _call_prompt_interpreter_ai(prompt: str, defaults: dict[str, Any], connector: Connector | None) -> dict[str, Any] | None:
-    if not settings.fala_ai_gemini_api_key:
+def _call_prompt_interpreter_ai(
+    db: Session,
+    prompt: str,
+    defaults: dict[str, Any],
+    connector: Connector | None,
+) -> tuple[dict[str, Any], str] | None:
+    model = resolve_ai_model(db, "reports")
+    if not model.api_key or not model.provider_supported:
         return None
-    response = httpx.post(
-        f"https://generativelanguage.googleapis.com/v1beta/models/{settings.fala_ai_gemini_model}:generateContent",
-        headers={"x-goog-api-key": settings.fala_ai_gemini_api_key},
-        json={
-            "system_instruction": {
-                "parts": [
-                    {
-                        "text": (
-                            "Voce converte prompts de relatorios Redmine em JSON estruturado. "
-                            "Retorne somente JSON valido, sem markdown."
-                        )
-                    }
-                ]
-            },
-            "contents": [{"parts": [{"text": _build_prompt_interpreter_request(prompt, defaults, connector)}]}],
-            "generationConfig": {
-                "temperature": 0.0,
-                "maxOutputTokens": 2500,
-                "responseMimeType": "application/json",
-            },
-        },
-        timeout=settings.fala_ai_gemini_timeout_seconds,
+    text = generate_ai_text(
+        model,
+        system_instruction=(
+            "Voce converte prompts de relatorios Redmine em JSON estruturado. "
+            "Retorne somente JSON valido, sem markdown."
+        ),
+        prompt=_build_prompt_interpreter_request(prompt, defaults, connector),
+        temperature=0.0,
+        max_tokens=2500,
+        json_response=True,
     )
-    response.raise_for_status()
-    data = response.json()
-    text = (
-        (data.get("candidates") or [{}])[0]
-        .get("content", {})
-        .get("parts", [{}])[0]
-        .get("text", "")
-    )
-    return json.loads(_extract_json_object(text))
+    return json.loads(_extract_json_object(text)), model.model_id
 
 
 def _normalize_prompt_plan(raw_plan: dict[str, Any]) -> dict[str, Any]:
@@ -579,7 +566,12 @@ def _default_date_range() -> tuple[date, date]:
     return end_date.replace(day=1), end_date
 
 
-def _parse_prompt_filters(prompt: str, defaults: dict[str, Any], connector: Connector | None = None) -> dict[str, Any]:
+def _parse_prompt_filters(
+    db: Session,
+    prompt: str,
+    defaults: dict[str, Any],
+    connector: Connector | None = None,
+) -> dict[str, Any]:
     output = {
         "project_ids": _normalize_project_ids(defaults.get("project_ids", [])),
         "status_id": defaults.get("status_id"),
@@ -683,14 +675,15 @@ def _parse_prompt_filters(prompt: str, defaults: dict[str, Any], connector: Conn
     }
 
     try:
-        raw_plan = _call_prompt_interpreter_ai(prompt, defaults, connector)
-        if raw_plan:
+        ai_result = _call_prompt_interpreter_ai(db, prompt, defaults, connector)
+        if ai_result:
+            raw_plan, interpreter_model = ai_result
             plan = _normalize_prompt_plan(raw_plan)
             output = _apply_prompt_plan(output, plan)
             output["prompt_options"] = {
                 **output["prompt_options"],
                 "interpreter": "gemini",
-                "interpreter_model": settings.fala_ai_gemini_model,
+                "interpreter_model": interpreter_model,
             }
     except Exception as exc:  # noqa: BLE001
         logger.warning("prompt_interpreter_ai_failed", extra={"error": str(exc)})
@@ -814,7 +807,7 @@ def run_prompt_report_template(
     if not effective_prompt:
         raise ValueError("Prompt is required")
 
-    filters = _parse_prompt_filters(effective_prompt, template.params_json or {}, connector=connector)
+    filters = _parse_prompt_filters(db, effective_prompt, template.params_json or {}, connector=connector)
     if not filters["project_ids"]:
         filters["project_ids"] = _default_project_ids(connector)
     if not filters["query_id"] and (

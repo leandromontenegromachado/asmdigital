@@ -1,12 +1,10 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-import httpx
-
 from app.core.config import settings
+from app.services.ai_model_service import ResolvedAiModel, generate_ai_text
 
 
 def _now_local() -> datetime:
@@ -54,51 +52,48 @@ def _build_system_instruction() -> str:
     )
 
 
-def _ask_gemini(question: str, user_name: str | None = None) -> str:
-    if not settings.fala_ai_gemini_api_key:
+def _ask_gemini(question: str, user_name: str | None = None, model: ResolvedAiModel | None = None) -> str:
+    if model:
+        if not model.api_key or not model.provider_supported:
+            return _fallback_answer(question)
+    elif not settings.fala_ai_gemini_api_key:
         return _fallback_answer(question)
 
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/{settings.fala_ai_gemini_model}:generateContent"
     prompt = question.strip()
     if user_name:
         prompt = f"Usuario: {user_name}\nPergunta: {prompt}"
 
-    payload: dict[str, Any] = {
-        "system_instruction": {"parts": [{"text": _build_system_instruction()}]},
-        "contents": [{"parts": [{"text": prompt}]}],
-        "generationConfig": {
-            "temperature": 0.4,
-            "maxOutputTokens": 300,
-            "thinkingConfig": {"thinkingBudget": 0},
-        },
-    }
-
-    response = httpx.post(
-        url,
-        params={"key": settings.fala_ai_gemini_api_key},
-        json=payload,
-        timeout=settings.fala_ai_gemini_timeout_seconds,
+    resolved = model or ResolvedAiModel(
+        feature_key="chefia",
+        name="Gemini",
+        provider="google_gemini",
+        model_id=settings.fala_ai_gemini_model,
+        api_key=settings.fala_ai_gemini_api_key,
+        timeout_seconds=settings.fala_ai_gemini_timeout_seconds,
     )
-    response.raise_for_status()
-    data = response.json()
-
-    candidates = data.get("candidates") or []
-    if not candidates:
-        return _fallback_answer(question)
-    content = candidates[0].get("content") or {}
-    parts = content.get("parts") or []
-    text_chunks = [str(part.get("text") or "").strip() for part in parts if isinstance(part, dict)]
-    final = " ".join(chunk for chunk in text_chunks if chunk).strip()
+    final = generate_ai_text(
+        resolved,
+        system_instruction=_build_system_instruction(),
+        prompt=prompt,
+        temperature=0.4,
+        max_tokens=300,
+        json_response=False,
+    ).strip()
     return final or _fallback_answer(question)
 
 
-def build_assistant_answer(question: str, *, user_name: str | None = None) -> str:
+def build_assistant_answer(
+    question: str,
+    *,
+    user_name: str | None = None,
+    model: ResolvedAiModel | None = None,
+) -> str:
     deterministic = _deterministic_time_answer(question)
     if deterministic:
         return deterministic
     if not settings.fala_ai_assistant_enabled:
         return _fallback_answer(question)
     try:
-        return _ask_gemini(question, user_name=user_name)
+        return _ask_gemini(question, user_name=user_name, model=model)
     except Exception:
         return _fallback_answer(question)

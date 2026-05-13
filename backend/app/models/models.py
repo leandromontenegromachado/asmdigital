@@ -32,6 +32,36 @@ class Connector(Base):
     mappings = relationship("Mapping", back_populates="connector")
 
 
+class AiModel(Base):
+    __tablename__ = "ai_models"
+    __table_args__ = (UniqueConstraint("provider", "model_id", name="uq_ai_models_provider_model_id"),)
+
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String(200), nullable=False)
+    provider = Column(String(80), nullable=False, default="google_gemini", index=True)
+    model_id = Column(String(200), nullable=False)
+    description = Column(Text, nullable=True)
+    api_key_env = Column(String(120), nullable=True)
+    is_active = Column(Boolean, nullable=False, default=True)
+    is_default = Column(Boolean, nullable=False, default=False)
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
+
+    assignments = relationship("AiModelAssignment", back_populates="model")
+
+
+class AiModelAssignment(Base):
+    __tablename__ = "ai_model_assignments"
+
+    id = Column(Integer, primary_key=True, index=True)
+    feature_key = Column(String(80), unique=True, nullable=False, index=True)
+    model_id = Column(Integer, ForeignKey("ai_models.id"), nullable=False, index=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
+
+    model = relationship("AiModel", back_populates="assignments")
+
+
 class Mapping(Base):
     __tablename__ = "mappings"
 

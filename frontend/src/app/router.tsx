@@ -14,6 +14,7 @@ import RoutinesPage from '../pages/RoutinesPage';
 import EmployeesPage from '../pages/EmployeesPage';
 import NotificationsPage from '../pages/NotificationsPage';
 import ManagementEventRulesPage from '../pages/ManagementEventRulesPage';
+import AiModelsPage from '../pages/AiModelsPage';
 import FalaAiPage from '../pages/FalaAiPage';
 import EvaluationCyclesPage from '../pages/EvaluationCyclesPage';
 import EvaluationAiReportPage from '../pages/EvaluationAiReportPage';
@@ -50,6 +51,8 @@ export const router = createBrowserRouter([
       { path: 'notificacoes', element: <NotificationsPage /> },
       { path: 'management-event-rules', element: <ManagementEventRulesPage /> },
       { path: 'regras-gerenciais', element: <ManagementEventRulesPage /> },
+      { path: 'settings/ai-models', element: <AiModelsPage /> },
+      { path: 'modelos-ia', element: <AiModelsPage /> },
       { path: 'settings/mappings', element: <MappingsPage /> },
       { path: 'settings/users', element: <UsersPage /> },
       { path: 'evaluation/cycles', element: <EvaluationCyclesPage /> },

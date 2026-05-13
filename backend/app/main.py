@@ -19,6 +19,7 @@ from app.api.routers.management_events import router as management_events_router
 from app.api.routers.pending_items import router as pending_items_router
 from app.api.routers.executive_dashboard import router as executive_dashboard_router
 from app.api.routers.dashboard import router as dashboard_router
+from app.api.routers.ai_models import router as ai_models_router
 from app.scheduler import start_scheduler, shutdown_scheduler
 
 configure_logging()
@@ -62,6 +63,7 @@ app.include_router(fala_ai_router, prefix=settings.api_prefix)
 app.include_router(evaluation_router, prefix=settings.api_prefix)
 app.include_router(notifications_router, prefix=settings.api_prefix)
 app.include_router(dashboard_router, prefix=settings.api_prefix)
+app.include_router(ai_models_router, prefix=settings.api_prefix)
 app.include_router(management_events_router, prefix=settings.api_prefix)
 app.include_router(pending_items_router, prefix=settings.api_prefix)
 app.include_router(executive_dashboard_router, prefix=settings.api_prefix)

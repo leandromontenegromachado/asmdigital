@@ -169,31 +169,35 @@ export default function EvaluationAiReportPage() {
 
       {message && <div className="no-print rounded-xl border border-blue-100 bg-blue-50 px-4 py-3 text-sm font-medium text-blue-800">{message}</div>}
 
-      <section className="no-print grid gap-4 rounded-2xl bg-white p-5 shadow-soft lg:grid-cols-[1fr_1fr_auto_auto_auto]">
-        <label className="flex flex-col gap-2 text-sm font-semibold text-slate-700">
-          Ciclo
-          <select className="rounded-xl border border-slate-200 px-3 py-2" value={cycleId || ''} onChange={(event) => handleCycleChange(Number(event.target.value))}>
-            {cycles.map((cycle) => <option key={cycle.id} value={cycle.id}>{cycle.name}</option>)}
-          </select>
-        </label>
+      <section className="no-print rounded-2xl bg-white p-4 shadow-soft sm:p-5">
+        <div className="grid gap-4 xl:grid-cols-[minmax(220px,1fr)_minmax(260px,1.2fr)_minmax(300px,auto)] xl:items-end">
+          <label className="flex min-w-0 flex-col gap-2 text-sm font-semibold text-slate-700">
+            Ciclo
+            <select className="min-w-0 rounded-xl border border-slate-200 px-3 py-2" value={cycleId || ''} onChange={(event) => handleCycleChange(Number(event.target.value))}>
+              {cycles.map((cycle) => <option key={cycle.id} value={cycle.id}>{cycle.name}</option>)}
+            </select>
+          </label>
 
-        <label className="flex flex-col gap-2 text-sm font-semibold text-slate-700">
-          Colaborador
-          <select className="rounded-xl border border-slate-200 px-3 py-2" value={employeeId || ''} onChange={(event) => handleEmployeeChange(Number(event.target.value))}>
-            <option value="">Selecione</option>
-            {employeeOptions.map((employee) => <option key={employee.employee_id} value={employee.employee_id}>{employee.employee_name}</option>)}
-          </select>
-        </label>
+          <label className="flex min-w-0 flex-col gap-2 text-sm font-semibold text-slate-700">
+            Colaborador
+            <select className="min-w-0 rounded-xl border border-slate-200 px-3 py-2" value={employeeId || ''} onChange={(event) => handleEmployeeChange(Number(event.target.value))}>
+              <option value="">Selecione</option>
+              {employeeOptions.map((employee) => <option key={employee.employee_id} value={employee.employee_id}>{employee.employee_name}</option>)}
+            </select>
+          </label>
 
-        <button disabled={!cycleId || loading} onClick={handleRunCycleAi} className="self-end rounded-xl border border-slate-200 px-4 py-2 text-sm font-bold text-slate-700 disabled:opacity-50">
-          Rodar IA ciclo
-        </button>
-        <button disabled={!employeeId || loading} onClick={handleRunEmployeeAi} className="self-end rounded-xl border border-slate-200 px-4 py-2 text-sm font-bold text-slate-700 disabled:opacity-50">
-          Rodar IA pessoa
-        </button>
-        <button disabled={!report} onClick={printReport} className="self-end rounded-xl bg-blue-600 px-4 py-2 text-sm font-bold text-white disabled:opacity-50">
-          Imprimir/PDF
-        </button>
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-3 xl:flex xl:justify-end">
+            <button disabled={!cycleId || loading} onClick={handleRunCycleAi} className="min-h-11 rounded-xl border border-slate-200 px-4 py-2 text-sm font-bold text-slate-700 disabled:opacity-50">
+              Rodar IA ciclo
+            </button>
+            <button disabled={!employeeId || loading} onClick={handleRunEmployeeAi} className="min-h-11 rounded-xl border border-slate-200 px-4 py-2 text-sm font-bold text-slate-700 disabled:opacity-50">
+              Rodar IA pessoa
+            </button>
+            <button disabled={!report} onClick={printReport} className="min-h-11 rounded-xl bg-blue-600 px-4 py-2 text-sm font-bold text-white disabled:opacity-50">
+              Imprimir/PDF
+            </button>
+          </div>
+        </div>
       </section>
 
       <div className="no-print flex justify-end">
