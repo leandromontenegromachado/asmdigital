@@ -166,6 +166,7 @@ def generate_ai_text(
             headers={"x-goog-api-key": model.api_key},
             json=payload,
             timeout=model.timeout_seconds,
+            verify=settings.ai_http_verify_ssl,
         )
         response.raise_for_status()
         return _extract_gemini_text(response.json())
@@ -201,6 +202,7 @@ def generate_ai_text(
             headers=headers,
             json=payload,
             timeout=model.timeout_seconds,
+            verify=settings.ai_http_verify_ssl,
         )
         if _openrouter_requires_reasoning_enabled(response):
             payload.pop("reasoning", None)
@@ -209,6 +211,7 @@ def generate_ai_text(
                 headers=headers,
                 json=payload,
                 timeout=model.timeout_seconds,
+                verify=settings.ai_http_verify_ssl,
             )
         response.raise_for_status()
         return _extract_openrouter_text(response.json())

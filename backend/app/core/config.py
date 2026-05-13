@@ -53,6 +53,7 @@ class Settings(BaseSettings):
     fala_ai_gemini_api_key: str | None = None
     fala_ai_gemini_model: str = "gemini-3-flash-preview"
     fala_ai_gemini_timeout_seconds: int = 60
+    ai_http_verify_ssl: bool = True
     openrouter_api_key: str | None = None
     openrouter_base_url: str = "https://openrouter.ai/api/v1"
     openrouter_site_url: str | None = None

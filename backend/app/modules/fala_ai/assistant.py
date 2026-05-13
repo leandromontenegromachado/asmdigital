@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+import logging
 from datetime import datetime
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from app.core.config import settings
 from app.services.ai_model_service import ResolvedAiModel, generate_ai_text
+
+logger = logging.getLogger(__name__)
 
 
 def _now_local() -> datetime:
@@ -95,5 +98,6 @@ def build_assistant_answer(
         return _fallback_answer(question)
     try:
         return _ask_gemini(question, user_name=user_name, model=model)
-    except Exception:
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("chefia_assistant_external_ai_failed", extra={"error": str(exc), "model": getattr(model, "model_id", None)})
         return _fallback_answer(question)
