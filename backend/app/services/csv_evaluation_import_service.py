@@ -431,13 +431,15 @@ class CsvEvaluationImportService:
         except ValueError:
             return None
 
-    def _employee_by_name(self, name: str | None) -> Employee | None:
+    def _employee_by_name(self, name: str | None, *, fuzzy: bool = True) -> Employee | None:
         if not name:
             return None
         employees = self.db.query(Employee).all()
         for employee in employees:
             if self._normalize_lookup(employee.name) == self._normalize_lookup(name):
                 return employee
+        if not fuzzy:
+            return None
         for employee in employees:
             if self._is_probable_same_person(employee.name, name):
                 return employee
@@ -449,7 +451,7 @@ class CsvEvaluationImportService:
         normalized_email = email.strip().lower() if email else None
 
         if self._is_synthetic_email(normalized_email):
-            employee = self._employee_by_name(name)
+            employee = self._employee_by_name(name, fuzzy=False)
             if employee:
                 return employee
 
@@ -459,7 +461,7 @@ class CsvEvaluationImportService:
                 employee.name = name
             return employee
 
-        employee = self._employee_by_name(name)
+        employee = self._employee_by_name(name, fuzzy=False)
         if employee and (not normalized_email or self._is_synthetic_email(normalized_email)):
             return employee
 
