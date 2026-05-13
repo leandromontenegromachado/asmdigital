@@ -47,6 +47,25 @@ ACTIVE_DISPATCH_WINDOW_HOURS = 16
 DEFAULT_WEEKDAYS = [1, 2, 3, 4, 5]
 
 
+def _participant_roles() -> set[str]:
+    roles = {
+        role.strip().lower()
+        for role in (settings.fala_ai_participant_roles or "").split(",")
+        if role.strip()
+    }
+    return roles or {"funcionario", "gerente", "viewer"}
+
+
+def participant_users_query(db: Session):
+    roles = _participant_roles()
+    return (
+        db.query(User)
+        .filter(User.is_active.is_(True))
+        .filter(User.role.in_(roles))
+        .order_by(User.id.asc())
+    )
+
+
 def build_engagement_snapshot(db: Session, target_date: date) -> dict[str, Any]:
     """Placeholder para evolucao futura (gamificacao, ranking e indicadores PPR)."""
     report = build_daily_report(db, target_date=target_date)
@@ -280,7 +299,16 @@ def build_dispatch_report(db: Session, dispatch_id: str) -> dict[str, Any]:
     if not dispatch:
         raise HTTPException(status_code=404, detail="Dispatch not found")
 
-    users = db.query(User).filter(User.is_active.is_(True)).order_by(User.id.asc()).all()
+    target_user_ids = dispatch.get("target_user_ids")
+    if isinstance(target_user_ids, list) and target_user_ids:
+        users = (
+            db.query(User)
+            .filter(User.id.in_([int(user_id) for user_id in target_user_ids if str(user_id).isdigit()]))
+            .order_by(User.id.asc())
+            .all()
+        )
+    else:
+        users = participant_users_query(db).all()
 
     logs = (
         db.query(FalaAiLog)
@@ -337,7 +365,7 @@ def build_poll_history(
     target_date: date | None = None,
 ) -> list[dict[str, Any]]:
     safe_limit = max(1, min(limit, 100))
-    users_total = db.query(User).filter(User.is_active.is_(True)).count()
+    users_total = participant_users_query(db).count()
 
     reminder_logs = (
         db.query(FalaAiLog)
@@ -414,7 +442,7 @@ def build_daily_report(db: Session, target_date: date) -> FalaAiDailyReportOut:
     day_start = datetime.combine(target_date, datetime.min.time(), tzinfo=timezone.utc)
     day_end = day_start.replace(hour=23, minute=59, second=59, microsecond=999999)
 
-    users = db.query(User).filter(User.is_active.is_(True)).order_by(User.id.asc()).all()
+    users = participant_users_query(db).all()
     checkins = (
         db.query(FalaAiCheckin)
         .filter(FalaAiCheckin.created_at >= day_start, FalaAiCheckin.created_at <= day_end)

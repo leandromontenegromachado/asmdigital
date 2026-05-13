@@ -47,6 +47,7 @@ class Settings(BaseSettings):
     fala_ai_teams_fallback_user_email: str | None = None
     fala_ai_teams_fallback_user_id: str | None = None
     fala_ai_missing_checkin_cron: str = "0 16 * * 1-5"
+    fala_ai_participant_roles: str = "funcionario,gerente,viewer"
     fala_ai_assistant_enabled: bool = True
     fala_ai_assistant_domain: str = "geral"
     fala_ai_gemini_api_key: str | None = None

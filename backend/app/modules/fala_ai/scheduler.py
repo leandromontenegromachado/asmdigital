@@ -12,7 +12,7 @@ from app.core.config import settings
 from app.db.session import SessionLocal
 from app.models import User
 from app.modules.fala_ai.models import FalaAiLog, FalaAiReminder
-from app.modules.fala_ai.service import build_daily_report, register_log
+from app.modules.fala_ai.service import build_daily_report, participant_users_query, register_log
 from app.modules.fala_ai.teams_integration import send_teams_message
 
 logger = logging.getLogger(__name__)
@@ -68,11 +68,12 @@ def _send_reminder(reminder_id: int) -> None:
         if not reminder:
             return
 
-        users = db.query(User).filter(User.is_active.is_(True)).all()
+        users = participant_users_query(db).all()
         payload = {
             "reminder_id": reminder.id,
             "message": reminder.mensagem,
             "users_targeted": len(users),
+            "target_user_ids": [user.id for user in users],
         }
         dispatch_id = str(uuid4())
 
