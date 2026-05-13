@@ -48,6 +48,7 @@ def _resolve_delivery_context(db) -> dict[str, str | None]:
     latest_context_log = (
         db.query(FalaAiLog)
         .filter(FalaAiLog.evento == "teams_bot_context_received")
+        .filter(FalaAiLog.payload["channel_id"].astext == "msteams")
         .order_by(FalaAiLog.created_at.desc())
         .first()
     )

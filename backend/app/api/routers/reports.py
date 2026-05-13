@@ -27,6 +27,46 @@ EXTRA_COLUMNS = [
 ]
 
 
+def _report_display_columns(report: Report, rows: list[ReportRow]) -> list[tuple[str, str]]:
+    params = report.params_json or {}
+    prompt_options = params.get("prompt_options") if isinstance(params.get("prompt_options"), dict) else {}
+    raw_columns = prompt_options.get("columns") or params.get("display_columns")
+    columns: list[tuple[str, str]] = []
+    if isinstance(raw_columns, list):
+        for item in raw_columns:
+            if not isinstance(item, dict):
+                continue
+            key = str(item.get("key") or "").strip()
+            label = str(item.get("label") or key).strip()
+            if key:
+                columns.append((label or key, key))
+    if columns:
+        return columns
+    has_raw = any(row.raw_json for row in rows)
+    return EXTRA_COLUMNS if has_raw else [
+        ("Cliente", "cliente"),
+        ("Sistema", "sistema"),
+        ("Entrega", "entrega"),
+        ("source_ref", "source_ref"),
+        ("source_url", "source_url"),
+    ]
+
+
+def _row_column_value(row: ReportRow, key: str):
+    if key == "cliente":
+        return row.cliente
+    if key == "sistema":
+        return row.sistema
+    if key == "entrega":
+        return row.entrega
+    if key == "source_ref":
+        return row.source_ref
+    if key == "source_url":
+        return row.source_url
+    raw = row.raw_json or {}
+    return raw.get(key)
+
+
 @router.post("/redmine-deliveries/generate", response_model=ReportOut)
 def generate_redmine_deliveries(
     payload: ReportGenerateRequest,
@@ -112,17 +152,11 @@ def export_report_csv(
 
     buffer = io.StringIO()
     writer = csv.writer(buffer)
-    has_raw = any(row.raw_json for row in rows)
-    headers = ["Cliente", "Sistema", "Entrega", "source_ref", "source_url"]
-    if has_raw:
-        headers.extend(label for label, _key in EXTRA_COLUMNS)
+    columns = _report_display_columns(report, rows)
+    headers = [label for label, _key in columns]
     writer.writerow(headers)
     for row in rows:
-        values = [row.cliente, row.sistema, row.entrega, row.source_ref, row.source_url]
-        if has_raw:
-            raw = row.raw_json or {}
-            values.extend(raw.get(key) for _label, key in EXTRA_COLUMNS)
-        writer.writerow(values)
+        writer.writerow([_row_column_value(row, key) for _label, key in columns])
 
     buffer.seek(0)
     filename = f"report-{report_id}.csv"
@@ -162,26 +196,14 @@ def export_report_pdf(
         Spacer(1, 12),
     ]
 
-    has_raw = any(row.raw_json for row in rows)
-    if has_raw:
-        data = [["ID", "Titulo", "Atribuido para", "Data prevista", "Alterado em", "Dias atraso"]]
-    else:
-        data = [["Cliente", "Sistema", "Entrega", "source_ref", "source_url"]]
+    columns = _report_display_columns(report, rows)
+    data = [[label for label, _key in columns]]
     for row in rows:
-        if has_raw:
-            raw = row.raw_json or {}
-            data.append([
-                row.source_ref or "-",
-                raw.get("subject") or "-",
-                raw.get("assigned_to") or "-",
-                raw.get("due_date") or "-",
-                raw.get("updated_on") or "-",
-                str(raw.get("days_overdue") or 0),
-            ])
-        else:
-            data.append([row.cliente or "-", row.sistema or "-", row.entrega or "-", row.source_ref or "-", row.source_url or "-"])
+        data.append([str(_row_column_value(row, key) or "-") for _label, key in columns])
 
-    table = Table(data, repeatRows=1, colWidths=[60, 300, 90, 130, 90, 70] if has_raw else [140, 140, 140, 90, 220])
+    available_width = 792 - 48
+    col_width = max(60, min(220, available_width / max(1, len(columns))))
+    table = Table(data, repeatRows=1, colWidths=[col_width] * max(1, len(columns)))
     table.setStyle(
         TableStyle(
             [

@@ -44,6 +44,114 @@ DEFAULT_NORMALIZATION_RULES = {
     },
 }
 
+REDMINE_COLUMN_LABELS = {
+    "id": "ID",
+    "source_ref": "ID",
+    "project": "Projeto",
+    "tracker": "Tipo",
+    "status": "Status",
+    "priority": "Prioridade",
+    "subject": "Titulo",
+    "author": "Autor",
+    "assigned_to": "Atribuido para",
+    "updated_on": "Alterado em",
+    "created_on": "Criado em",
+    "start_date": "Data inicio",
+    "due_date": "Data prevista",
+    "done_ratio": "% concluido",
+    "estimated_hours": "Horas estimadas",
+    "spent_hours": "Horas gastas",
+    "category": "Categoria",
+    "fixed_version": "Versao",
+    "days_overdue": "Dias em atraso",
+}
+
+REDMINE_COLUMN_ALIASES = {
+    "": "",
+    "#": "source_ref",
+    "id": "source_ref",
+    "n": "source_ref",
+    "numero": "source_ref",
+    "titulo": "subject",
+    "assunto": "subject",
+    "demanda": "subject",
+    "atribuido_para": "assigned_to",
+    "atribuida_para": "assigned_to",
+    "atribuido": "assigned_to",
+    "responsavel": "assigned_to",
+    "data_prevista": "due_date",
+    "previsto": "due_date",
+    "alterado_em": "updated_on",
+    "atualizado_em": "updated_on",
+    "criado_em": "created_on",
+    "data_inicio": "start_date",
+    "inicio": "start_date",
+    "situacao": "status",
+    "tipo": "tracker",
+    "versao": "fixed_version",
+    "versao_alvo": "fixed_version",
+    "categoria": "category",
+    "concluido": "done_ratio",
+    "percentual_concluido": "done_ratio",
+}
+
+
+def _normalize_column_key(value: Any) -> str:
+    text = str(value or "").strip()
+    if not text:
+        return ""
+    normalized = unicodedata.normalize("NFKD", text)
+    normalized = "".join(char for char in normalized if not unicodedata.combining(char))
+    normalized = re.sub(r"[^a-zA-Z0-9_]+", "_", normalized).strip("_").lower()
+    return normalized
+
+
+def _normalize_redmine_columns(raw_columns: Any) -> list[dict[str, str]]:
+    if not isinstance(raw_columns, list):
+        return []
+    columns: list[dict[str, str]] = []
+    seen: set[str] = set()
+    for item in raw_columns:
+        if isinstance(item, dict):
+            raw_key = item.get("key") or item.get("name") or item.get("field") or item.get("caption") or item.get("label")
+            raw_label = item.get("label") or item.get("caption") or item.get("name") or raw_key
+        else:
+            raw_key = item
+            raw_label = item
+        key = _normalize_column_key(raw_key)
+        key = REDMINE_COLUMN_ALIASES.get(key, key)
+        if not key or key in seen:
+            continue
+        seen.add(key)
+        label = str(raw_label or REDMINE_COLUMN_LABELS.get(key) or key).strip()
+        columns.append({"key": key, "label": REDMINE_COLUMN_LABELS.get(key, label)})
+    return columns
+
+
+def _load_saved_query_columns(adapter: RedmineAdapter, project_ids: list[str], query_id: str | None) -> list[dict[str, str]]:
+    if not query_id:
+        return []
+    candidates: list[dict[str, Any]] = []
+    for project_id in project_ids or [None]:
+        try:
+            candidates.extend(adapter.fetch_queries(project_id=project_id))
+        except Exception:  # noqa: BLE001
+            continue
+    for query in candidates:
+        if str(query.get("id")) != str(query_id):
+            continue
+        columns = _normalize_redmine_columns(query.get("columns") or query.get("column_names"))
+        if columns:
+            return columns
+    for project_id in project_ids or [None]:
+        try:
+            columns = _normalize_redmine_columns(adapter.fetch_query_columns(project_id, query_id))
+        except Exception:  # noqa: BLE001
+            continue
+        if columns:
+            return columns
+    return []
+
 
 def _get_mapping(db: Session, mapping_type: str, connector_id: int | None = None) -> dict[str, Any]:
     query = db.query(Mapping).filter(Mapping.mapping_type == mapping_type)
@@ -195,6 +303,10 @@ def generate_redmine_report(
         raise ValueError("Connector config missing base_url or api_key")
 
     adapter = RedmineAdapter(base_url=base_url, api_key=api_key)
+    prompt_options = dict(prompt_options or {})
+    saved_query_columns = _load_saved_query_columns(adapter, project_ids, query_id) if query_id else []
+    if saved_query_columns and not prompt_options.get("columns"):
+        prompt_options["columns"] = saved_query_columns
 
     started = time.time()
     report = Report(
@@ -206,7 +318,8 @@ def generate_redmine_report(
             "end_date": str(end_date),
             "status_id": status_id,
             "query_id": query_id,
-            "prompt_options": prompt_options or {},
+            "prompt_options": prompt_options,
+            "display_columns": saved_query_columns,
             "status": "running",
         },
         status="running",
@@ -271,7 +384,7 @@ def generate_redmine_report(
                     mapping_rules=mapping_rules,
                     normalization_rules=normalization_rules,
                     regex_rules=regex_rules,
-                    prompt_options=prompt_options,
+                prompt_options=prompt_options,
                 )
                 diagnostics.append(
                     {
@@ -551,9 +664,11 @@ def _is_overdue(issue: dict[str, Any]) -> bool:
 def _issue_report_metadata(issue: dict[str, Any]) -> dict[str, Any]:
     due_date = _parse_redmine_date(issue.get("due_date"))
     days_overdue = (date.today() - due_date).days if due_date and due_date < date.today() else 0
-    return {
+    metadata = {
         "source_ref": str(issue.get("id")) if issue.get("id") else None,
+        "id": str(issue.get("id")) if issue.get("id") else None,
         "subject": issue.get("subject"),
+        "project": _nested_name(issue, "project"),
         "tracker": _nested_name(issue, "tracker"),
         "status": _nested_name(issue, "status"),
         "priority": _nested_name(issue, "priority"),
@@ -561,11 +676,30 @@ def _issue_report_metadata(issue: dict[str, Any]) -> dict[str, Any]:
         "author": _nested_name(issue, "author"),
         "created_on": issue.get("created_on"),
         "updated_on": issue.get("updated_on"),
+        "start_date": issue.get("start_date"),
         "due_date": issue.get("due_date"),
         "done_ratio": issue.get("done_ratio"),
+        "estimated_hours": issue.get("estimated_hours"),
+        "spent_hours": issue.get("spent_hours"),
+        "category": _nested_name(issue, "category"),
+        "fixed_version": _nested_name(issue, "fixed_version"),
         "is_overdue": _is_overdue(issue),
         "days_overdue": days_overdue,
     }
+    for custom_field in issue.get("custom_fields") or []:
+        if not isinstance(custom_field, dict):
+            continue
+        value = custom_field.get("value")
+        if isinstance(value, list):
+            value = ", ".join(str(item) for item in value)
+        field_id = custom_field.get("id")
+        field_name = custom_field.get("name")
+        if field_id is not None:
+            metadata[f"cf_{field_id}"] = value
+        normalized_name = _normalize_column_key(field_name)
+        if normalized_name:
+            metadata[normalized_name] = value
+    return metadata
 
 
 def _report_row_sort_key(row: ReportRow) -> tuple[int, str, str]:

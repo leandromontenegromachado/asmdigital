@@ -32,6 +32,7 @@ export interface RedmineQuery {
   id: number;
   name: string;
   is_public?: boolean | null;
+  columns?: { key: string; label: string }[] | null;
 }
 
 export const listRedmineQueries = async (id: number, projectId?: string) => {

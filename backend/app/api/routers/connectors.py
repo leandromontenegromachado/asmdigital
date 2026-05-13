@@ -12,6 +12,23 @@ from app.services.azure_devops_service import AZURE_CONNECTOR_TYPES, get_azure_a
 router = APIRouter(prefix="/connectors", tags=["connectors"])
 
 
+def _redmine_query_columns(item: dict) -> list[dict[str, str]] | None:
+    raw_columns = item.get("columns") or item.get("column_names")
+    if not isinstance(raw_columns, list):
+        return None
+    columns: list[dict[str, str]] = []
+    for column in raw_columns:
+        if isinstance(column, dict):
+            key = str(column.get("name") or column.get("key") or column.get("field") or "").strip()
+            label = str(column.get("caption") or column.get("label") or column.get("name") or key).strip()
+        else:
+            key = str(column or "").strip()
+            label = key
+        if key:
+            columns.append({"key": key, "label": label or key})
+    return columns or None
+
+
 @router.get("", response_model=list[ConnectorOut])
 def list_connectors(db: Session = Depends(get_db), _user=Depends(get_current_user)):
     return db.query(Connector).order_by(Connector.id.desc()).all()
@@ -99,6 +116,7 @@ def list_redmine_queries(
                 id=int(item.get("id")),
                 name=str(item.get("name", "")),
                 is_public=item.get("is_public"),
+                columns=_redmine_query_columns(item),
             )
             for item in queries
             if item.get("id") is not None

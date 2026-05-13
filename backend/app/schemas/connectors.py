@@ -41,3 +41,4 @@ class RedmineQueryOut(BaseModel):
     id: int
     name: str
     is_public: bool | None = None
+    columns: list[dict[str, str]] | None = None

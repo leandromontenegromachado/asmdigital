@@ -320,6 +320,7 @@ const ReportsRedminePage: React.FC = () => {
 
   const hasRedmineDetails = Boolean(report?.rows.some((row) => row.raw_json));
   type ReportDisplayRow = ReportDetail['rows'][number] & {
+    [key: string]: any;
     assunto: string;
     status_redmine: string;
     responsavel: string;
@@ -351,12 +352,24 @@ const ReportsRedminePage: React.FC = () => {
     ? report?.report.params_json?.prompt_options?.columns
         .map((item: any) => {
           const mapped = promptColumnMap[String(item?.key || '')];
-          return mapped ? { ...mapped, label: String(item?.label || mapped.label) } : null;
+          const key = String(item?.key || '').trim();
+          if (mapped) return { ...mapped, label: String(item?.label || mapped.label) };
+          return key ? { key: key as keyof ReportDisplayRow, label: String(item?.label || key) } : null;
+        })
+        .filter(Boolean)
+    : null;
+  const savedQueryColumns = !promptColumns?.length && Array.isArray(report?.report.params_json?.display_columns)
+    ? report?.report.params_json?.display_columns
+        .map((item: any) => {
+          const mapped = promptColumnMap[String(item?.key || '')];
+          const key = String(item?.key || '').trim();
+          if (mapped) return { ...mapped, label: String(item?.label || mapped.label) };
+          return key ? { key: key as keyof ReportDisplayRow, label: String(item?.label || key) } : null;
         })
         .filter(Boolean)
     : null;
   const reportColumns: { key: keyof ReportDisplayRow; label: string }[] = hasRedmineDetails
-    ? (promptColumns?.length ? promptColumns : [
+    ? (promptColumns?.length ? promptColumns : savedQueryColumns?.length ? savedQueryColumns : [
         { key: 'source_ref', label: 'ID' },
         { key: 'assunto', label: 'Titulo' },
         { key: 'responsavel', label: 'Atribuido para' },
@@ -371,19 +384,23 @@ const ReportsRedminePage: React.FC = () => {
         { key: 'source_ref', label: 'source_ref' },
         { key: 'source_url', label: 'source_url' },
       ];
-  const reportRows: ReportDisplayRow[] = (report?.rows || []).map((row) => ({
-    ...row,
-    assunto: row.raw_json?.subject || '',
-    status_redmine: row.raw_json?.status || '',
-    responsavel: row.raw_json?.assigned_to || '',
-    data_prevista: row.raw_json?.due_date || '',
-    alterado_em: row.raw_json?.updated_on || '',
-    dias_atraso: row.raw_json?.days_overdue ?? '',
-    prioridade: row.raw_json?.priority || '',
-    tipo: row.raw_json?.tracker || '',
-    autor: row.raw_json?.author || '',
-    percentual_concluido: row.raw_json?.done_ratio ?? '',
-  }));
+  const reportRows: ReportDisplayRow[] = (report?.rows || []).map((row) => {
+    const raw = row.raw_json || {};
+    return {
+      ...raw,
+      ...row,
+      assunto: raw.subject || '',
+      status_redmine: raw.status || '',
+      responsavel: raw.assigned_to || '',
+      data_prevista: raw.due_date || '',
+      alterado_em: raw.updated_on || '',
+      dias_atraso: raw.days_overdue ?? '',
+      prioridade: raw.priority || '',
+      tipo: raw.tracker || '',
+      autor: raw.author || '',
+      percentual_concluido: raw.done_ratio ?? '',
+    };
+  });
   const reportParams = report?.report.params_json || {};
   const reportErrors = Array.isArray(reportParams.errors) ? reportParams.errors.filter(Boolean) : [];
 
