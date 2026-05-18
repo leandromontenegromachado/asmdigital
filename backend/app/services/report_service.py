@@ -341,7 +341,10 @@ def generate_redmine_report(
                 end_date,
                 status_id=status_id,
                 query_id=query_id,
-                apply_date_filter=not bool(prompt_options and prompt_options.get("overdue_only")),
+                apply_date_filter=not bool(
+                    prompt_options
+                    and (prompt_options.get("overdue_only") or prompt_options.get("ignore_date_filter"))
+                ),
             ))
             project_rows = _issues_to_report_rows(
                 report_id=report.id,
@@ -519,7 +522,8 @@ def _nested_name(issue: dict[str, Any], key: str) -> str | None:
 def _normalize_filter_text(value: Any) -> str:
     text = str(value or "").strip()
     normalized = unicodedata.normalize("NFKD", text)
-    return "".join(char for char in normalized if not unicodedata.combining(char)).casefold()
+    normalized = "".join(char for char in normalized if not unicodedata.combining(char)).casefold()
+    return re.sub(r"\s+", " ", normalized).strip()
 
 
 def _is_excluded_status(issue: dict[str, Any], excluded_status_names: Any) -> bool:

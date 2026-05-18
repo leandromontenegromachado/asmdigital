@@ -318,6 +318,68 @@ def _parse_prompt_numeric_filters(prompt: str) -> list[dict[str, Any]]:
     return filters
 
 
+def _parse_assignee_filters(prompt: str) -> list[dict[str, Any]]:
+    normalized = _normalize_prompt_text(prompt)
+    patterns = [
+        r"(?:do|da|de)\s+recurso\s+(?P<name>[a-z0-9 .'-]{3,80})",
+        r"(?:para|do|da|de)\s+(?:responsavel|atribuido(?:\s+para)?|atribuida(?:\s+para)?)\s+(?P<name>[a-z0-9 .'-]{3,80})",
+        r"(?:meu\s+nome|usuario|usuaria)\s+(?P<name>[a-z0-9 .'-]{3,80})",
+    ]
+    stop_pattern = (
+        r"\s+(?:com|e|que|onde|quando|no|na|nos|nas|do|da|de|dos|das)\s+"
+        r"(?:status|situacao|data|periodo|query|consulta|projeto|coluna|campo|orden|em\s+aberto|abertas?|fechadas?)\b"
+    )
+    filters: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for pattern in patterns:
+        for match in re.finditer(pattern, normalized, flags=re.IGNORECASE):
+            name = re.split(stop_pattern, match.group("name"), maxsplit=1, flags=re.IGNORECASE)[0]
+            name = name.strip(" .,:;-")
+            if not name or name in {"especifico", "especifica"}:
+                continue
+            key = _normalize_prompt_text(name)
+            if key not in seen:
+                seen.add(key)
+                filters.append({"field": "assigned_to", "operator": "contains", "values": [name]})
+    return filters
+
+
+def _has_explicit_period(prompt: str) -> bool:
+    normalized = _normalize_prompt_text(prompt)
+    return bool(
+        re.search(r"ultim[oa]s?\s+\d+\s+dias", normalized)
+        or re.search(r"(?:este|esse|mes|m[eê]s|periodo|per[ií]odo|entre|de)\s+\d{2}/\d{2}/\d{4}", normalized)
+        or re.search(r"\d{4}-\d{2}-\d{2}", normalized)
+        or "este mes" in normalized
+        or "mes atual" in normalized
+    )
+
+
+def _append_prompt_filters(prompt_options: dict[str, Any], filters: list[dict[str, Any]]) -> dict[str, Any]:
+    if not filters:
+        return prompt_options
+    existing = list(prompt_options.get("prompt_filters") or [])
+    seen = {
+        (
+            str(item.get("field")),
+            str(item.get("operator")),
+            tuple(str(value) for value in item.get("values", []) if value is not None),
+        )
+        for item in existing
+        if isinstance(item, dict)
+    }
+    for item in filters:
+        key = (
+            str(item.get("field")),
+            str(item.get("operator")),
+            tuple(str(value) for value in item.get("values", []) if value is not None),
+        )
+        if key not in seen:
+            existing.append(item)
+            seen.add(key)
+    return {**prompt_options, "prompt_filters": existing}
+
+
 def _prompt_fingerprint(prompt: str) -> str:
     normalized = re.sub(r"\s+", " ", (prompt or "").strip())
     return hashlib.sha256(normalized.encode("utf-8")).hexdigest()
@@ -599,6 +661,11 @@ def _parse_prompt_filters(
         output["status_id"] = "closed"
     elif "aberto" in lowered or "abertos" in lowered or "em execu" in lowered or "em andamento" in lowered:
         output["status_id"] = "open"
+        if not _has_explicit_period(prompt):
+            output["prompt_options"] = {
+                **output["prompt_options"],
+                "ignore_date_filter": True,
+            }
     elif "todos os status" in lowered or "qualquer status" in lowered:
         output["status_id"] = None
 
@@ -661,13 +728,11 @@ def _parse_prompt_filters(
 
     numeric_filters = _parse_prompt_numeric_filters(prompt)
     if numeric_filters:
-        output["prompt_options"] = {
-            **output["prompt_options"],
-            "prompt_filters": [
-                *(output["prompt_options"].get("prompt_filters") or []),
-                *numeric_filters,
-            ],
-        }
+        output["prompt_options"] = _append_prompt_filters(output["prompt_options"], numeric_filters)
+
+    assignee_filters = _parse_assignee_filters(prompt)
+    if assignee_filters:
+        output["prompt_options"] = _append_prompt_filters(output["prompt_options"], assignee_filters)
 
     output["prompt_options"] = {
         **output["prompt_options"],
@@ -680,6 +745,13 @@ def _parse_prompt_filters(
             raw_plan, interpreter_model = ai_result
             plan = _normalize_prompt_plan(raw_plan)
             output = _apply_prompt_plan(output, plan)
+            if assignee_filters:
+                output["prompt_options"] = _append_prompt_filters(output["prompt_options"], assignee_filters)
+            if output["status_id"] == "open" and not _has_explicit_period(prompt):
+                output["prompt_options"] = {
+                    **output["prompt_options"],
+                    "ignore_date_filter": True,
+                }
             output["prompt_options"] = {
                 **output["prompt_options"],
                 "interpreter": "gemini",
