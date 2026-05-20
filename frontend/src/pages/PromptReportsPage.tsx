@@ -258,6 +258,7 @@ const PromptReportsPage: React.FC = () => {
   const [running, setRunning] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [info, setInfo] = useState<string | null>(null);
+  const [formFeedback, setFormFeedback] = useState<{ tone: 'success' | 'error'; message: string } | null>(null);
   const [runPromptOverride, setRunPromptOverride] = useState('');
   const [promptBrief, setPromptBrief] = useState('');
   const [savedQueries, setSavedQueries] = useState<RedmineQuery[]>([]);
@@ -319,6 +320,7 @@ const PromptReportsPage: React.FC = () => {
     setPromptBrief(extractNaturalRequest(template.prompt_text));
     setInfo(null);
     setError(null);
+    setFormFeedback(null);
   };
 
   const resetForm = () => {
@@ -334,6 +336,7 @@ const PromptReportsPage: React.FC = () => {
     setPromptBrief('');
     setInfo(null);
     setError(null);
+    setFormFeedback(null);
   };
 
   const primaryProjectId = () =>
@@ -425,10 +428,13 @@ const PromptReportsPage: React.FC = () => {
     setSaving(true);
     setError(null);
     setInfo(null);
+    setFormFeedback(null);
     try {
       const payload = buildPayload();
       if (!payload.name || !payload.prompt_text || !payload.connector_id) {
-        setError('Preencha nome, conector e pedido em linguagem natural.');
+        const message = 'Preencha nome, conector e pedido em linguagem natural.';
+        setError(message);
+        setFormFeedback({ tone: 'error', message });
         return;
       }
       if (form.schedule_enabled && form.schedule_mode === 'once' && !form.schedule_once_date) {
@@ -441,6 +447,7 @@ const PromptReportsPage: React.FC = () => {
         setForm(templateToForm(updated));
         setPromptBrief(extractNaturalRequest(updated.prompt_text));
         setInfo('Template atualizado.');
+        setFormFeedback({ tone: 'success', message: 'Template atualizado com sucesso.' });
       } else {
         const created = await createPromptReportTemplate(payload);
         setTemplates((prev) => [created, ...prev]);
@@ -448,9 +455,12 @@ const PromptReportsPage: React.FC = () => {
         setForm(templateToForm(created));
         setPromptBrief(extractNaturalRequest(created.prompt_text));
         setInfo('Template criado.');
+        setFormFeedback({ tone: 'success', message: 'Template criado com sucesso.' });
       }
     } catch (err: any) {
-      setError(err?.response?.data?.detail || 'Falha ao salvar template.');
+      const message = String(err?.response?.data?.detail || 'Falha ao salvar template.');
+      setError(message);
+      setFormFeedback({ tone: 'error', message });
     } finally {
       setSaving(false);
     }
@@ -847,6 +857,18 @@ const PromptReportsPage: React.FC = () => {
                 </button>
               )}
             </div>
+            {formFeedback && (
+              <div
+                className={`mt-3 rounded-lg border px-4 py-3 text-sm font-semibold ${
+                  formFeedback.tone === 'success'
+                    ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
+                    : 'border-red-200 bg-red-50 text-red-700'
+                }`}
+                role="status"
+              >
+                {formFeedback.message}
+              </div>
+            )}
 
             <div className="mt-8 border-t border-slate-100 pt-5">
               <h3 className="text-sm font-bold text-slate-800 mb-3">Executar sob demanda</h3>
