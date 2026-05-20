@@ -307,6 +307,7 @@ def generate_redmine_report(
     saved_query_columns = _load_saved_query_columns(adapter, project_ids, query_id) if query_id else []
     if saved_query_columns and not prompt_options.get("columns"):
         prompt_options["columns"] = saved_query_columns
+    ignore_date_filter = bool(prompt_options.get("ignore_date_filter") or prompt_options.get("overdue_only"))
 
     started = time.time()
     report = Report(
@@ -314,8 +315,8 @@ def generate_redmine_report(
         params_json={
             "connector_id": connector.id,
             "project_ids": project_ids,
-            "start_date": str(start_date),
-            "end_date": str(end_date),
+            "start_date": None if ignore_date_filter else str(start_date),
+            "end_date": None if ignore_date_filter else str(end_date),
             "status_id": status_id,
             "query_id": query_id,
             "prompt_options": prompt_options,
@@ -341,10 +342,7 @@ def generate_redmine_report(
                 end_date,
                 status_id=status_id,
                 query_id=query_id,
-                apply_date_filter=not bool(
-                    prompt_options
-                    and (prompt_options.get("overdue_only") or prompt_options.get("ignore_date_filter"))
-                ),
+                apply_date_filter=not ignore_date_filter,
             ))
             project_rows = _issues_to_report_rows(
                 report_id=report.id,

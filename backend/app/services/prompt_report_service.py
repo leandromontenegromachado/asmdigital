@@ -644,6 +644,8 @@ def _parse_prompt_filters(
     }
 
     lowered = prompt.lower()
+    has_default_period = bool(output["start_date"] or output["end_date"])
+    has_explicit_period = _has_explicit_period(prompt)
 
     query_match = re.search(r"query(?:_id)?\s*[:=]?\s*(\d+)", prompt, flags=re.IGNORECASE)
     if query_match:
@@ -690,6 +692,11 @@ def _parse_prompt_filters(
                 output["end_date"] = end_date
 
     if output["start_date"] is None or output["end_date"] is None:
+        if not has_default_period and not has_explicit_period:
+            output["prompt_options"] = {
+                **output["prompt_options"],
+                "ignore_date_filter": True,
+            }
         default_start, default_end = _default_date_range()
         output["start_date"] = output["start_date"] or default_start
         output["end_date"] = output["end_date"] or default_end

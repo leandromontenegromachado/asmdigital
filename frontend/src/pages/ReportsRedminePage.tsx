@@ -16,6 +16,66 @@ type NotificationModalState = {
   mode: 'single' | 'all';
 };
 
+const extractNaturalRequest = (promptText?: string | null) => {
+  const text = String(promptText || '').trim();
+  if (!text) return '';
+  const objectiveMatch = text.match(/#\s*Objetivo\s*([\s\S]*?)(?:\n##\s|$)/i);
+  return (objectiveMatch?.[1] || text).trim();
+};
+
+const inferOutputItems = (request: string) => {
+  const lowered = request.toLowerCase();
+  const items: string[] = [];
+  if (lowered.includes('resumo')) items.push('Resumo conforme solicitado no objetivo');
+  if (lowered.includes('risco') || lowered.includes('bloqueio')) items.push('Riscos e bloqueios identificados nos dados retornados');
+  if (lowered.includes('tabela') || lowered.includes('campos') || lowered.includes('liste') || lowered.includes('listar') || lowered.includes('trazer')) {
+    items.push('Tabela com as colunas citadas no objetivo');
+  }
+  if (lowered.includes('ordene') || lowered.includes('ordenar')) items.push('Ordenacao conforme criterio descrito no objetivo');
+  if (lowered.includes('acao') || lowered.includes('recomend')) {
+    items.push('Acoes recomendadas apenas quando derivadas dos dados');
+  }
+  return items.length ? items : ['Resultado direto conforme o objetivo descrito', 'Tabela com os campos relevantes citados no pedido'];
+};
+
+const inferRules = (request: string) => {
+  const lowered = request.toLowerCase();
+  const rules = [
+    'Nao inventar campos fora do retorno do Redmine.',
+    'Declarar quando houver dados incompletos.',
+  ];
+  if (lowered.includes('atras') || lowered.includes('vencid') || lowered.includes('data prevista menor')) {
+    rules.push('Considerar atrasado quando a data prevista for menor que a data de hoje e a demanda nao estiver fechada.');
+  }
+  if (lowered.includes('ordene') || lowered.includes('ordenar')) {
+    rules.push('Respeitar a ordenacao solicitada no objetivo.');
+  }
+  return rules;
+};
+
+const formatBrazilDateTime = (value: unknown, options: { dateOnly?: boolean } = {}) => {
+  if (!value) return '';
+  const text = String(value).trim();
+  if (!text) return '';
+
+  if (options.dateOnly || /^\d{4}-\d{2}-\d{2}$/.test(text)) {
+    const dateOnly = text.slice(0, 10);
+    const match = dateOnly.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+    return match ? `${match[3]}/${match[2]}/${match[1]}` : text;
+  }
+
+  const parsed = new Date(text);
+  if (Number.isNaN(parsed.getTime())) return text;
+  return parsed.toLocaleString('pt-BR', {
+    day: '2-digit',
+    month: '2-digit',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  });
+};
+
 const ReportsRedminePage: React.FC = () => {
   const [searchParams, setSearchParams] = useSearchParams();
   const [connectors, setConnectors] = useState<Connector[]>([]);
@@ -49,6 +109,41 @@ const ReportsRedminePage: React.FC = () => {
   const [notificationNotifyManager, setNotificationNotifyManager] = useState(false);
   const reportIdParam = searchParams.get('report_id');
   const isViewingExistingReport = Boolean(reportIdParam);
+
+  const buildPromptFromNaturalRequest = (request: string) => {
+    const projects = projectIds
+      .split(',')
+      .map((item) => normalizeProjectId(item))
+      .filter(Boolean);
+    let periodLine = 'sem filtro de data';
+    if (startDate && endDate) {
+      periodLine = `de ${startDate} a ${endDate}`;
+    } else if (startDate) {
+      periodLine = `a partir de ${startDate}`;
+    }
+    const statusText = statusId === 'open' ? 'abertos' : statusId === 'closed' ? 'fechados' : 'todos os status';
+    const outputItems = inferOutputItems(request).map((item) => `- ${item}`).join('\n');
+    const rules = inferRules(request).map((item) => `- ${item}`).join('\n');
+
+    return `# Objetivo
+${request.trim()}
+
+## Fonte
+- conector_id: ${connectorId || '{{CONECTOR_ID}}'}
+- origem: redmine_mcp
+
+## Escopo
+- projetos: ${projects.length ? projects.join(', ') : '{{projetos_do_conector}}'}
+- status: ${statusText}
+- periodo: ${periodLine}
+- query_id: ${queryId.trim() || 'opcional'}
+
+## Saida esperada
+${outputItems}
+
+## Regras
+${rules}`;
+  };
 
   const getConnectorProjectIds = (id: number | null) => {
     if (!id) return [];
@@ -93,7 +188,7 @@ const ReportsRedminePage: React.FC = () => {
         setReport(detail);
         setPage(1);
         applyReportParams(detail);
-        setEditablePrompt(String(detail.report.params_json?.prompt_used || ''));
+        setEditablePrompt(extractNaturalRequest(String(detail.report.params_json?.prompt_used || '')));
         pushToast({ title: 'Relatorio carregado', description: `Exibindo relatorio #${reportId}.`, tone: 'success' });
       })
       .catch(() => {
@@ -186,7 +281,7 @@ const ReportsRedminePage: React.FC = () => {
     setStartDate(nextStart);
     setEndDate(nextEnd);
     setStatusId(nextStatus);
-    setEditablePrompt(String(params.prompt_used || ''));
+    setEditablePrompt(extractNaturalRequest(String(params.prompt_used || '')));
 
     const connector = connectors.find((item) => item.id === nextConnectorId);
     const baseUrl = connector?.config_json?.base_url?.replace(/\/$/, '');
@@ -247,21 +342,22 @@ const ReportsRedminePage: React.FC = () => {
   const handleRerunFromPrompt = async () => {
     if (!report) return;
     const templateId = Number(report.report.params_json?.template_id);
-    const promptOverride = editablePrompt.trim();
+    const naturalRequest = editablePrompt.trim();
     if (!Number.isFinite(templateId) || templateId <= 0) {
       setError('Este relatorio nao tem template vinculado para executar novamente.');
       return;
     }
-    if (!promptOverride) {
-      setError('Informe o prompt antes de executar novamente.');
+    if (!naturalRequest) {
+      setError('Informe o pedido em linguagem natural antes de executar novamente.');
       return;
     }
 
     setRerunning(true);
     setLoading(true);
     setError(null);
-    pushToast({ title: 'Executando novamente', description: 'Gerando um novo relatorio com o prompt editado.', tone: 'info' });
+    pushToast({ title: 'Executando novamente', description: 'Gerando um novo relatorio com o pedido ajustado.', tone: 'info' });
     try {
+      const promptOverride = buildPromptFromNaturalRequest(naturalRequest);
       const result = await runPromptReportTemplate(templateId, promptOverride);
       const detail = await getReport(result.report_id, { page: 1, page_size: report.page_size || 10 });
       setReport(detail);
@@ -270,7 +366,7 @@ const ReportsRedminePage: React.FC = () => {
       setSearchParams({ report_id: String(result.report_id) });
       pushToast({ title: 'Novo relatorio gerado', description: `Relatorio #${result.report_id} carregado.`, tone: 'success' });
     } catch (err: any) {
-      const detail = err?.response?.data?.detail || 'Falha ao executar novamente com o prompt editado.';
+      const detail = err?.response?.data?.detail || 'Falha ao executar novamente com o pedido ajustado.';
       setError(String(detail));
       pushToast({ title: 'Falha ao executar novamente', description: String(detail), tone: 'error' });
     } finally {
@@ -480,8 +576,12 @@ const ReportsRedminePage: React.FC = () => {
       assunto: raw.subject || '',
       status_redmine: raw.status || '',
       responsavel: raw.assigned_to || '',
-      data_prevista: raw.due_date || '',
-      alterado_em: raw.updated_on || '',
+      created_on: formatBrazilDateTime(raw.created_on),
+      updated_on: formatBrazilDateTime(raw.updated_on),
+      start_date: formatBrazilDateTime(raw.start_date, { dateOnly: true }),
+      due_date: formatBrazilDateTime(raw.due_date, { dateOnly: true }),
+      data_prevista: formatBrazilDateTime(raw.due_date, { dateOnly: true }),
+      alterado_em: formatBrazilDateTime(raw.updated_on),
       dias_atraso: raw.days_overdue ?? '',
       prioridade: raw.priority || '',
       tipo: raw.tracker || '',
@@ -530,7 +630,9 @@ const ReportsRedminePage: React.FC = () => {
             <div>
               <p className="text-xs font-semibold uppercase text-slate-500">Periodo</p>
               <p className="mt-1 text-sm font-bold text-slate-800">
-                {reportParams.start_date || '-'} a {reportParams.end_date || '-'}
+                {reportParams.start_date || reportParams.end_date
+                  ? `${formatBrazilDateTime(reportParams.start_date, { dateOnly: true }) || '-'} a ${formatBrazilDateTime(reportParams.end_date, { dateOnly: true }) || '-'}`
+                  : 'Sem filtro de data'}
               </p>
             </div>
             <div>
@@ -541,7 +643,7 @@ const ReportsRedminePage: React.FC = () => {
           {reportParams.prompt_used && (
             <div className="mt-4 rounded-lg bg-slate-50 p-3 text-sm text-slate-700">
               <div className="flex flex-wrap items-center justify-between gap-2">
-                <p className="font-semibold text-slate-800">Prompt usado</p>
+                <p className="font-semibold text-slate-800">Pedido em linguagem natural</p>
                 <button
                   type="button"
                   onClick={handleRerunFromPrompt}
@@ -553,12 +655,13 @@ const ReportsRedminePage: React.FC = () => {
                 </button>
               </div>
               <textarea
-                className="mt-2 min-h-44 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 font-mono text-xs text-slate-800"
+                className="mt-2 min-h-32 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-800"
                 value={editablePrompt}
                 onChange={(e) => setEditablePrompt(e.target.value)}
+                placeholder="Descreva o ajuste desejado para gerar um novo relatório."
               />
               <p className="mt-2 text-xs text-slate-500">
-                Altere o prompt e execute novamente para gerar um novo relatorio.
+                Altere o pedido em linguagem natural. O sistema monta o prompt técnico automaticamente ao executar novamente.
               </p>
             </div>
           )}

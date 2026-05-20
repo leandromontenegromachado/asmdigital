@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { Copy, Play, Plus, Save, Trash2, Wand2 } from 'lucide-react';
+import { Pencil, Play, Plus, Save, Trash2 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { AppShell } from '../components/AppShell';
 import { Topbar } from '../components/Topbar';
@@ -75,6 +75,13 @@ const normalizeScheduleDay = (day: string) => {
 const formatDate = (value?: string | null) => {
   if (!value) return '-';
   return new Date(value).toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' });
+};
+
+const extractNaturalRequest = (promptText?: string | null) => {
+  const text = String(promptText || '').trim();
+  if (!text) return '';
+  const objectiveMatch = text.match(/#\s*Objetivo\s*([\s\S]*?)(?:\n##\s|$)/i);
+  return (objectiveMatch?.[1] || text).trim();
 };
 
 const parseSchedule = (cron?: string | null, isEnabled?: boolean) => {
@@ -186,7 +193,7 @@ const buildPromptMarkdown = (form: FormState, brief: string) => {
     .filter(Boolean);
   const projectLine = projects.length ? projects.join(', ') : '{{projetos_do_conector}}';
 
-  let periodLine = 'este mes';
+  let periodLine = 'sem filtro de data';
   if (form.start_date && form.end_date) {
     periodLine = `de ${form.start_date} a ${form.end_date}`;
   } else if (form.start_date) {
@@ -269,6 +276,7 @@ const PromptReportsPage: React.FC = () => {
       if (!selectedId && templatesData.length) {
         setSelectedId(templatesData[0].id);
         setForm(templateToForm(templatesData[0]));
+        setPromptBrief(extractNaturalRequest(templatesData[0].prompt_text));
       } else if (!selectedId && !templatesData.length) {
         const redmineConnector = connectorsData.find((connector) => connector.type === 'redmine') || connectorsData[0];
         setForm((prev) => ({
@@ -308,6 +316,7 @@ const PromptReportsPage: React.FC = () => {
   const selectTemplate = (template: PromptReportTemplate) => {
     setSelectedId(template.id);
     setForm(templateToForm(template));
+    setPromptBrief(extractNaturalRequest(template.prompt_text));
     setInfo(null);
     setError(null);
   };
@@ -366,12 +375,6 @@ const PromptReportsPage: React.FC = () => {
     }
   };
 
-  const handleGeneratePrompt = () => {
-    const generated = buildPromptMarkdown(form, promptBrief.trim());
-    setForm((prev) => ({ ...prev, prompt_text: generated }));
-    setInfo('Prompt em Markdown gerado no template.');
-  };
-
   const handleConnectorChange = (connectorId: string) => {
     const connector = connectors.find((item) => String(item.id) === connectorId);
     setForm((prev) => ({
@@ -394,38 +397,29 @@ const PromptReportsPage: React.FC = () => {
     setForm((prev) => ({ ...prev, schedule_days: days }));
   };
 
-  const handleCopyPrompt = async () => {
-    if (!form.prompt_text.trim()) {
-            setError('Nao ha prompt para copiar.');
-      return;
-    }
-    try {
-      await navigator.clipboard.writeText(form.prompt_text);
-      setInfo('Prompt copiado para a area de transferencia.');
-    } catch {
-            setError('Nao foi possivel copiar o prompt.');
-    }
+  const buildPayload = (requestOverride?: string) => {
+    const naturalRequest = (requestOverride ?? promptBrief).trim() || extractNaturalRequest(form.prompt_text);
+    return {
+      name: form.name.trim(),
+      connector_id: Number(form.connector_id),
+      prompt_text: buildPromptMarkdown(form, naturalRequest),
+      params_json: {
+        project_ids: form.project_ids
+          .split(',')
+          .map((item) => item.trim().toLowerCase())
+          .filter((item) => !isPlaceholderProject(item)),
+        status_id: form.status_id.trim() || null,
+        query_id: form.query_id.trim() || null,
+        start_date: form.start_date || null,
+        end_date: form.end_date || null,
+        schedule_mode: form.schedule_enabled ? form.schedule_mode : null,
+        schedule_once_at: buildOnceSchedule(form),
+        natural_request: naturalRequest,
+      },
+      schedule_cron: buildScheduleCron(form),
+      is_enabled: form.schedule_enabled,
+    };
   };
-
-  const buildPayload = () => ({
-    name: form.name.trim(),
-    connector_id: Number(form.connector_id),
-    prompt_text: form.prompt_text.trim(),
-    params_json: {
-      project_ids: form.project_ids
-        .split(',')
-        .map((item) => item.trim().toLowerCase())
-        .filter((item) => !isPlaceholderProject(item)),
-      status_id: form.status_id.trim() || null,
-      query_id: form.query_id.trim() || null,
-      start_date: form.start_date || null,
-      end_date: form.end_date || null,
-      schedule_mode: form.schedule_enabled ? form.schedule_mode : null,
-      schedule_once_at: buildOnceSchedule(form),
-    },
-    schedule_cron: buildScheduleCron(form),
-    is_enabled: form.schedule_enabled,
-  });
 
   const handleSave = async () => {
     setSaving(true);
@@ -434,7 +428,7 @@ const PromptReportsPage: React.FC = () => {
     try {
       const payload = buildPayload();
       if (!payload.name || !payload.prompt_text || !payload.connector_id) {
-        setError('Preencha nome, conector e prompt.');
+        setError('Preencha nome, conector e pedido em linguagem natural.');
         return;
       }
       if (form.schedule_enabled && form.schedule_mode === 'once' && !form.schedule_once_date) {
@@ -445,12 +439,14 @@ const PromptReportsPage: React.FC = () => {
         const updated = await updatePromptReportTemplate(selectedId, payload);
         setTemplates((prev) => prev.map((item) => (item.id === updated.id ? updated : item)));
         setForm(templateToForm(updated));
+        setPromptBrief(extractNaturalRequest(updated.prompt_text));
         setInfo('Template atualizado.');
       } else {
         const created = await createPromptReportTemplate(payload);
         setTemplates((prev) => [created, ...prev]);
         setSelectedId(created.id);
         setForm(templateToForm(created));
+        setPromptBrief(extractNaturalRequest(created.prompt_text));
         setInfo('Template criado.');
       }
     } catch (err: any) {
@@ -460,19 +456,22 @@ const PromptReportsPage: React.FC = () => {
     }
   };
 
-  const handleDelete = async () => {
-    if (!selectedId) return;
+  const handleDelete = async (templateId = selectedId) => {
+    if (!templateId) return;
+    const template = templates.find((item) => item.id === templateId);
+    const confirmed = window.confirm(`Excluir o template "${template?.name || templateId}"? Esta ação não remove relatórios já gerados.`);
+    if (!confirmed) return;
     setSaving(true);
     setError(null);
     setInfo(null);
     try {
-      await deletePromptReportTemplate(selectedId);
-      const next = templates.filter((item) => item.id !== selectedId);
+      await deletePromptReportTemplate(templateId);
+      const next = templates.filter((item) => item.id !== templateId);
       setTemplates(next);
-      if (next.length) {
+      if (selectedId === templateId && next.length) {
         setSelectedId(next[0].id);
         setForm(templateToForm(next[0]));
-      } else {
+      } else if (selectedId === templateId) {
         resetForm();
       }
       setInfo('Template removido.');
@@ -501,8 +500,9 @@ const PromptReportsPage: React.FC = () => {
       const synced = await updatePromptReportTemplate(selectedId, payload);
       setTemplates((prev) => prev.map((item) => (item.id === synced.id ? synced : item)));
       setForm(templateToForm(synced));
+      setPromptBrief(extractNaturalRequest(synced.prompt_text));
 
-      const promptOverride = runPromptOverride.trim() || form.prompt_text.trim() || undefined;
+      const promptOverride = runPromptOverride.trim() ? buildPayload(runPromptOverride.trim()).prompt_text : synced.prompt_text;
       const result = await runPromptReportTemplate(selectedId, promptOverride);
             setInfo(`Relatorio executado com sucesso. ID: ${result.report_id}`);
       await loadData();
@@ -549,17 +549,37 @@ const PromptReportsPage: React.FC = () => {
                 <p className="text-xs text-slate-500">Nenhum template cadastrado.</p>
               )}
               {templates.map((item) => (
-                <button
+                <div
                   key={item.id}
-                  onClick={() => selectTemplate(item)}
-                  className={`w-full rounded-lg border px-3 py-2 text-left ${
+                  className={`rounded-lg border p-3 ${
                     selectedId === item.id ? 'border-blue-400 bg-blue-50' : 'border-slate-200 bg-white hover:bg-slate-50'
                   }`}
                 >
-                  <p className="text-sm font-semibold text-slate-800">{item.name}</p>
-                <p className="text-xs text-slate-500">Ultima execucao: {formatDate(item.last_run_at)}</p>
-                {item.next_run_at && <p className="text-xs text-slate-500">Proxima: {formatDate(item.next_run_at)}</p>}
-              </button>
+                  <button type="button" onClick={() => selectTemplate(item)} className="w-full text-left">
+                    <p className="text-sm font-semibold text-slate-800">{item.name}</p>
+                    <p className="text-xs text-slate-500">Ultima execucao: {formatDate(item.last_run_at)}</p>
+                    {item.next_run_at && <p className="text-xs text-slate-500">Proxima: {formatDate(item.next_run_at)}</p>}
+                  </button>
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    <button
+                      type="button"
+                      onClick={() => selectTemplate(item)}
+                      className="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50"
+                    >
+                      <Pencil size={13} />
+                      Editar
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleDelete(item.id)}
+                      disabled={saving}
+                      className="inline-flex items-center gap-1 rounded-lg border border-red-200 bg-white px-2.5 py-1.5 text-xs font-semibold text-red-600 hover:bg-red-50 disabled:opacity-50"
+                    >
+                      <Trash2 size={13} />
+                      Excluir
+                    </button>
+                  </div>
+                </div>
               ))}
             </div>
           </div>
@@ -569,24 +589,6 @@ const PromptReportsPage: React.FC = () => {
               <h2 className="text-base font-bold text-slate-800">
                 {selectedId ? `Editar template #${selectedId}` : 'Novo template'}
               </h2>
-              <div className="flex flex-wrap gap-2">
-                <button
-                  type="button"
-                  onClick={handleGeneratePrompt}
-                  className="inline-flex items-center gap-2 rounded-lg border border-blue-200 bg-blue-50 px-3 py-1.5 text-xs font-semibold text-blue-700"
-                >
-                  <Wand2 size={14} />
-                  Gerar prompt Markdown
-                </button>
-                <button
-                  type="button"
-                  onClick={handleCopyPrompt}
-                  className="inline-flex items-center gap-2 rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-semibold text-slate-700"
-                >
-                  <Copy size={14} />
-                  Copiar prompt
-                </button>
-              </div>
             </div>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div className="flex flex-col gap-2">
@@ -614,44 +616,16 @@ const PromptReportsPage: React.FC = () => {
                 </select>
               </div>
               <div className="flex flex-col gap-2 md:col-span-2">
-                <label className="text-xs font-semibold text-slate-700">Assistente IA (brief)</label>
+                <label className="text-xs font-semibold text-slate-700">Pedido em linguagem natural</label>
                 <textarea
                   className="rounded-lg border border-slate-200 px-3 py-2"
-                  rows={2}
+                  rows={5}
                   value={promptBrief}
                   onChange={(e) => setPromptBrief(e.target.value)}
-                                    placeholder="Descreva o que voce precisa: ex. mostrar bloqueios e riscos dos projetos de integracao."
-                />
-                <div className="flex flex-wrap gap-2">
-                  <button
-                    type="button"
-                    onClick={handleGeneratePrompt}
-                    className="inline-flex items-center gap-2 rounded-lg border border-blue-200 bg-blue-50 px-3 py-1.5 text-xs font-semibold text-blue-700"
-                  >
-                    <Wand2 size={14} />
-                    Gerar prompt Markdown
-                  </button>
-                  <button
-                    type="button"
-                    onClick={handleCopyPrompt}
-                    className="inline-flex items-center gap-2 rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-semibold text-slate-700"
-                  >
-                    <Copy size={14} />
-                    Copiar prompt
-                  </button>
-                </div>
-              </div>
-              <div className="flex flex-col gap-2 md:col-span-2">
-                <label className="text-xs font-semibold text-slate-700">Prompt</label>
-                <textarea
-                  className="rounded-lg border border-slate-200 px-3 py-2"
-                  rows={4}
-                  value={form.prompt_text}
-                  onChange={(e) => setForm((prev) => ({ ...prev, prompt_text: e.target.value }))}
-                                    placeholder="Ex.: gerar relatorio dos ultimos 30 dias para projetos: asm-dem, asm-app com status fechado"
+                  placeholder="Ex.: Trazer as demandas em aberto do recurso Leandro Montenegro Machado, com título, atribuído para, data prevista, status e dias em atraso."
                 />
                 <p className="text-xs text-slate-500">
-                  Entende expressoes como: "ultimos 30 dias", "este mes", "status fechado", "query_id 1234", "projetos: x, y".
+                  Descreva o relatório como você pediria para uma pessoa. O sistema monta o prompt técnico automaticamente ao salvar ou executar.
                 </p>
               </div>
               <div className="flex flex-col gap-2">
@@ -864,7 +838,7 @@ const PromptReportsPage: React.FC = () => {
               </button>
               {selectedId && (
                 <button
-                  onClick={handleDelete}
+                  onClick={() => handleDelete()}
                   disabled={saving}
                   className="inline-flex items-center gap-2 rounded-lg border border-red-200 px-4 py-2 text-sm font-semibold text-red-600"
                 >
@@ -881,7 +855,7 @@ const PromptReportsPage: React.FC = () => {
                 rows={3}
                 value={runPromptOverride}
                 onChange={(e) => setRunPromptOverride(e.target.value)}
-                                placeholder="Opcional: sobrescreva o prompt apenas para esta execucao."
+                placeholder="Opcional: descreva um pedido diferente apenas para esta execucao."
               />
               <button
                 onClick={handleRunNow}
