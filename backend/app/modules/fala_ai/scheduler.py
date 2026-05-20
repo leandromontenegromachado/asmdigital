@@ -36,7 +36,7 @@ def _resolve_delivery_context(db) -> dict[str, str | None]:
     channel_id = "teams" if settings.fala_ai_teams_default_conversation_id else None
     source = "settings"
 
-    if service_url and conversation_id:
+    if service_url and conversation_id and _is_valid_teams_context(service_url, conversation_id, bot_id):
         return {
             "service_url": service_url,
             "conversation_id": conversation_id,
@@ -45,22 +45,58 @@ def _resolve_delivery_context(db) -> dict[str, str | None]:
             "source": source,
         }
 
+    context_logs = (
+        db.query(FalaAiLog)
+        .filter(FalaAiLog.evento == "teams_bot_context_received")
+        .filter(FalaAiLog.payload["channel_id"].astext.in_(["msteams", "webchat"]))
+        .order_by(FalaAiLog.created_at.desc())
+        .limit(25)
+        .all()
+    )
+    for context_log in context_logs:
+        payload = context_log.payload if context_log and isinstance(context_log.payload, dict) else {}
+        service_url = str(payload.get("service_url")).strip() if payload.get("service_url") else None
+        conversation_id = str(payload.get("conversation_id")).strip() if payload.get("conversation_id") else None
+        bot_id = str(payload.get("bot_id")).strip() if payload.get("bot_id") else None
+        if not _is_valid_teams_context(service_url, conversation_id, bot_id):
+            continue
+        return {
+            "service_url": service_url,
+            "conversation_id": conversation_id,
+            "bot_id": bot_id,
+            "channel_id": str(payload.get("channel_id")).strip() if payload.get("channel_id") else None,
+            "source": "latest_valid_context_log",
+        }
+
     latest_context_log = (
         db.query(FalaAiLog)
         .filter(FalaAiLog.evento == "teams_bot_context_received")
-        .filter(FalaAiLog.payload["channel_id"].astext == "msteams")
         .order_by(FalaAiLog.created_at.desc())
         .first()
     )
     payload = latest_context_log.payload if latest_context_log and isinstance(latest_context_log.payload, dict) else {}
-
     return {
-        "service_url": str(payload.get("service_url")).strip() if payload.get("service_url") else None,
-        "conversation_id": str(payload.get("conversation_id")).strip() if payload.get("conversation_id") else None,
-        "bot_id": str(payload.get("bot_id")).strip() if payload.get("bot_id") else None,
+        "service_url": None,
+        "conversation_id": None,
+        "bot_id": None,
         "channel_id": str(payload.get("channel_id")).strip() if payload.get("channel_id") else None,
-        "source": "latest_context_log" if payload else "none",
+        "source": "invalid_context_log" if payload else "none",
     }
+
+
+def _is_valid_teams_context(service_url: str | None, conversation_id: str | None, bot_id: str | None = None) -> bool:
+    invalid_values = {"", "none", "null", "local-conversation", "local-bot", "test", "teste"}
+    values = [service_url or "", conversation_id or "", bot_id or ""]
+    if not service_url or not conversation_id:
+        return False
+    normalized = {str(value).strip().lower() for value in values}
+    if normalized & invalid_values:
+        return False
+    return service_url.startswith("https://") and (
+        "/amer" in service_url
+        or "trafficmanager.net" in service_url
+        or "webchat.botframework.com" in service_url
+    )
 
 
 def _send_reminder(reminder_id: int) -> None:

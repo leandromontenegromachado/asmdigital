@@ -11,7 +11,15 @@ from reportlab.platypus import SimpleDocTemplate, Spacer, Table, TableStyle, Par
 from app.api.deps import get_current_user
 from app.db.session import get_db
 from app.models import Connector, Report, ReportRow
-from app.schemas.reports import ReportDetail, ReportGenerateRequest, ReportOut
+from app.schemas.reports import (
+    ReportDetail,
+    ReportGenerateRequest,
+    ReportNotificationItemOut,
+    ReportNotificationRequest,
+    ReportNotificationResponse,
+    ReportOut,
+)
+from app.services.notification_service import send_notifications_for_report
 from app.services.report_service import generate_redmine_report
 
 router = APIRouter(prefix="/reports", tags=["reports"])
@@ -135,6 +143,62 @@ def get_report(
         page=page,
         page_size=page_size,
         query=q,
+    )
+
+
+@router.post("/{report_id}/notifications/send", response_model=ReportNotificationResponse)
+def send_report_notifications(
+    report_id: int,
+    payload: ReportNotificationRequest,
+    db: Session = Depends(get_db),
+    _user=Depends(get_current_user),
+):
+    report = db.query(Report).filter(Report.id == report_id).first()
+    if not report:
+        raise HTTPException(status_code=404, detail="Report not found")
+
+    row_ids = payload.row_ids or None
+    if row_ids:
+        found = (
+            db.query(ReportRow.id)
+            .filter(ReportRow.report_id == report_id, ReportRow.id.in_(row_ids))
+            .all()
+        )
+        found_ids = {item[0] for item in found}
+        missing_ids = [row_id for row_id in row_ids if row_id not in found_ids]
+        if missing_ids:
+            raise HTTPException(status_code=404, detail=f"Report rows not found: {missing_ids}")
+
+    notifications = send_notifications_for_report(
+        db,
+        report,
+        row_ids=row_ids,
+        template_id=payload.template_id,
+        channel=payload.channel,
+        subject=payload.subject,
+        message=payload.message,
+        requires_approval=payload.requires_approval,
+        notify_manager=payload.notify_manager,
+        simulation=payload.simulation,
+    )
+    return ReportNotificationResponse(
+        report_id=report.id,
+        total=len(notifications),
+        sent=len([item for item in notifications if item.status == "enviado"]),
+        simulated=len([item for item in notifications if item.status == "simulado"]),
+        errors=len([item for item in notifications if item.status == "erro"]),
+        pending_approval=len([item for item in notifications if item.status == "aguardando_aprovacao"]),
+        notifications=[
+            ReportNotificationItemOut(
+                id=item.id,
+                row_id=None,
+                employee_name=item.employee.name if item.employee else None,
+                recipient=item.recipient or item.to_ref,
+                status=item.status,
+                error=item.error,
+            )
+            for item in notifications
+        ],
     )
 
 

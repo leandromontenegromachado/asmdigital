@@ -13,3 +13,4 @@ def configure_logging() -> None:
     handler.setFormatter(formatter)
     root.addHandler(handler)
     root.setLevel(logging.INFO)
+    logging.getLogger("httpx").setLevel(logging.WARNING)

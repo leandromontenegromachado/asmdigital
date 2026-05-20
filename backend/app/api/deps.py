@@ -1,12 +1,13 @@
 from fastapi import Depends, HTTPException, status
-from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from fastapi.security import OAuth2PasswordBearer
 from sqlalchemy.orm import Session
 
+from app.core.config import settings
 from app.core.security import decode_token
 from app.db.session import get_db
 from app.models import User
 
-security = HTTPBearer()
+security = OAuth2PasswordBearer(tokenUrl=f"{settings.api_prefix}/auth/token")
 ADMIN_ROLES = {"admin", "gerente"}
 VALID_USER_ROLES = {"admin", "gerente", "funcionario", "viewer"}
 
@@ -21,11 +22,11 @@ def has_admin_access(user: User) -> bool:
 
 
 def get_current_user(
-    creds: HTTPAuthorizationCredentials = Depends(security),
+    token: str = Depends(security),
     db: Session = Depends(get_db),
 ) -> User:
     try:
-        payload = decode_token(creds.credentials)
+        payload = decode_token(token)
     except Exception:  # noqa: BLE001
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token")
     user_id = payload.get("sub")

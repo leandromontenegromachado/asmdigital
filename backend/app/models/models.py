@@ -15,6 +15,8 @@ class User(Base):
     password_hash = Column(String(255), nullable=False)
     role = Column(String(50), default="admin", nullable=False)
     is_active = Column(Boolean, nullable=False, default=True)
+    telegram_chat_id = Column(String(80), unique=True, nullable=True, index=True)
+    telegram_username = Column(String(120), nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
 
@@ -136,6 +138,70 @@ class Automation(Base):
 
     runs = relationship("AutomationRun", back_populates="automation")
     notification_rules = relationship("NotificationRule", back_populates="automation", cascade="all, delete-orphan")
+
+
+class AssistantConversation(Base):
+    __tablename__ = "assistant_conversations"
+
+    id = Column(Integer, primary_key=True, index=True)
+    channel = Column(String(40), nullable=False, index=True)
+    external_chat_id = Column(String(120), nullable=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=True, index=True)
+    state_json = Column(JSONB, nullable=False, default=dict)
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
+
+    user = relationship("User")
+    messages = relationship("AssistantMessage", back_populates="conversation", cascade="all, delete-orphan")
+    actions = relationship("AssistantAction", back_populates="conversation", cascade="all, delete-orphan")
+
+
+class AssistantMessage(Base):
+    __tablename__ = "assistant_messages"
+
+    id = Column(Integer, primary_key=True, index=True)
+    conversation_id = Column(Integer, ForeignKey("assistant_conversations.id"), nullable=False, index=True)
+    direction = Column(String(20), nullable=False)
+    message_type = Column(String(40), nullable=False, default="text")
+    text = Column(Text, nullable=True)
+    raw_payload = Column(JSONB, nullable=False, default=dict)
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+    conversation = relationship("AssistantConversation", back_populates="messages")
+
+
+class AssistantAction(Base):
+    __tablename__ = "assistant_actions"
+
+    id = Column(Integer, primary_key=True, index=True)
+    conversation_id = Column(Integer, ForeignKey("assistant_conversations.id"), nullable=False, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=True, index=True)
+    action_type = Column(String(80), nullable=False, index=True)
+    status = Column(String(40), nullable=False, default="draft", index=True)
+    payload_json = Column(JSONB, nullable=False, default=dict)
+    result_json = Column(JSONB, nullable=False, default=dict)
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
+    confirmed_at = Column(DateTime(timezone=True), nullable=True)
+
+    conversation = relationship("AssistantConversation", back_populates="actions")
+    user = relationship("User")
+
+
+class AssistantCommandLog(Base):
+    __tablename__ = "assistant_command_logs"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(String(120), nullable=True, index=True)
+    user_name = Column(String(200), nullable=True)
+    channel = Column(String(60), nullable=False, index=True)
+    text = Column(Text, nullable=False)
+    intent = Column(String(80), nullable=True, index=True)
+    action = Column(String(120), nullable=True, index=True)
+    response_message = Column(Text, nullable=True)
+    success = Column(Boolean, nullable=False, default=False)
+    raw_payload_json = Column(JSONB, nullable=False, default=dict)
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
 
 class AutomationRun(Base):
@@ -588,6 +654,10 @@ __all__ = [
     "PromptReportTemplate",
     "Automation",
     "AutomationRun",
+    "AssistantAction",
+    "AssistantCommandLog",
+    "AssistantConversation",
+    "AssistantMessage",
     "Notification",
     "NotificationRule",
     "NotificationTemplate",

@@ -188,6 +188,71 @@ def send_notifications_for_automation_run(db: Session, automation: Automation, r
     return created
 
 
+def send_notifications_for_report(
+    db: Session,
+    report: Report,
+    *,
+    row_ids: list[int] | None = None,
+    template_id: int | None = None,
+    channel: str | None = None,
+    subject: str | None = None,
+    message: str | None = None,
+    requires_approval: bool = False,
+    notify_manager: bool = False,
+    simulation: bool = False,
+) -> list[Notification]:
+    automation = _automation_for_report(db, report)
+    active_rules = []
+    if automation:
+        active_rules = (
+            db.query(NotificationRule)
+            .filter(NotificationRule.automation_id == automation.id, NotificationRule.is_active.is_(True))
+            .order_by(NotificationRule.id.asc())
+            .all()
+        )
+
+    if automation and active_rules and not template_id and not channel and not subject and not message and not requires_approval:
+        run = AutomationRun(
+            automation_id=automation.id,
+            status="manual_notification",
+            summary_json={
+                "message": f"Envio manual de notificacoes do relatorio #{report.id}",
+                "trigger": "report_manual_notification",
+                "results": [
+                    {
+                        "index": 1,
+                        "task": f"report:{report.id}",
+                        "action": "report_notification",
+                        "status": "success",
+                        "data": {
+                            "report_id": report.id,
+                            "row_ids": row_ids or [],
+                        },
+                    }
+                ],
+            },
+            finished_at=datetime.now(timezone.utc),
+        )
+        db.add(run)
+        db.commit()
+        db.refresh(run)
+        return send_notifications_for_automation_run(db, automation, run, simulation=simulation)
+
+    return _send_direct_report_notifications(
+        db,
+        report,
+        row_ids=row_ids,
+        template_id=template_id,
+        channel=channel,
+        subject=subject,
+        message=message,
+        requires_approval=requires_approval,
+        notify_manager=notify_manager,
+        simulation=simulation,
+        automation=automation,
+    )
+
+
 def retry_notification(db: Session, notification: Notification, *, simulation: bool = False) -> Notification:
     if notification.status == NOTIFICATION_CANCELLED:
         return notification
@@ -800,41 +865,200 @@ def _structured_items_from_run(db: Session, run: AutomationRun) -> list[dict[str
             if report_id:
                 report = db.query(Report).filter(Report.id == int(report_id)).first()
                 if report:
-                    items.extend(_items_from_report(db, report))
+                    raw_row_ids = data.get("row_ids")
+                    row_ids = [int(value) for value in raw_row_ids if str(value).isdigit()] if isinstance(raw_row_ids, list) else None
+                    items.extend(_items_from_report(db, report, row_ids=row_ids))
     return items
 
 
-def _items_from_report(db: Session, report: Report) -> list[dict[str, Any]]:
-    rows = db.query(ReportRow).filter(ReportRow.report_id == report.id).order_by(ReportRow.id.asc()).all()
-    items: list[dict[str, Any]] = []
+def _items_from_report(db: Session, report: Report, row_ids: list[int] | None = None) -> list[dict[str, Any]]:
+    query = db.query(ReportRow).filter(ReportRow.report_id == report.id)
+    if row_ids:
+        query = query.filter(ReportRow.id.in_(row_ids))
+    rows = query.order_by(ReportRow.id.asc()).all()
+    return [_item_from_report_row(db, report, row) for row in rows]
+
+
+def _item_from_report_row(db: Session, report: Report, row: ReportRow) -> dict[str, Any]:
     params = report.params_json or {}
     connector_id = params.get("connector_id")
     connector = db.query(Connector).filter(Connector.id == int(connector_id)).first() if connector_id else None
     redmine_base_url = (connector.config_json or {}).get("base_url") if connector else None
     project_ids = params.get("project_ids") if isinstance(params.get("project_ids"), list) else []
     project_id = project_ids[0] if project_ids else params.get("project_id")
-    for row in rows:
-        raw = row.raw_json if isinstance(row.raw_json, dict) else {}
-        demand_url = row.source_url or _redmine_issue_url(redmine_base_url, row.source_ref)
-        item = {
-            **raw,
-            "cliente": row.cliente,
-            "sistema": row.sistema,
-            "entrega": row.entrega,
-            "project_id": project_id,
-            "project_ids": ", ".join(str(value) for value in project_ids),
-            "nome_projeto": project_id or row.sistema or row.entrega or _project_name_from_subject(raw.get("subject")),
-            "demanda_id": row.source_ref,
-            "id_demanda": row.source_ref,
-            "source_ref": row.source_ref,
-            "source_url": demand_url,
-            "link_demanda": demand_url,
-            "redmine_issue_url": demand_url,
-            "link_relatorio": f"{settings.app_public_url}/reports/redmine-deliveries?report_id={report.id}",
-        }
-        items.append(item)
-    return items
+    raw = row.raw_json if isinstance(row.raw_json, dict) else {}
+    demand_url = row.source_url or _redmine_issue_url(redmine_base_url, row.source_ref)
+    return {
+        **raw,
+        "row_id": row.id,
+        "cliente": row.cliente,
+        "sistema": row.sistema,
+        "entrega": row.entrega,
+        "project_id": project_id,
+        "project_ids": ", ".join(str(value) for value in project_ids),
+        "nome_projeto": project_id or row.sistema or row.entrega or _project_name_from_subject(raw.get("subject")),
+        "demanda_id": row.source_ref,
+        "id_demanda": row.source_ref,
+        "source_ref": row.source_ref,
+        "source_url": demand_url,
+        "link_demanda": demand_url,
+        "redmine_issue_url": demand_url,
+        "link_relatorio": f"{settings.app_public_url}/reports/redmine-deliveries?report_id={report.id}",
+    }
 
+
+def _automation_for_report(db: Session, report: Report) -> Automation | None:
+    template_id = (report.params_json or {}).get("template_id")
+    if not template_id:
+        return None
+    return db.query(Automation).filter(Automation.key == f"prompt_report_template_{template_id}").first()
+
+
+def _send_direct_report_notifications(
+    db: Session,
+    report: Report,
+    *,
+    row_ids: list[int] | None,
+    template_id: int | None,
+    channel: str | None,
+    subject: str | None,
+    message: str | None,
+    requires_approval: bool,
+    notify_manager: bool,
+    simulation: bool,
+    automation: Automation | None,
+) -> list[Notification]:
+    rows_query = db.query(ReportRow).filter(ReportRow.report_id == report.id)
+    if row_ids:
+        rows_query = rows_query.filter(ReportRow.id.in_(row_ids))
+    rows = rows_query.order_by(ReportRow.id.asc()).all()
+    template = _report_notification_template(db, template_id, channel)
+    subject_template = subject
+    message_template = message
+    created: list[Notification] = []
+
+    for row in rows:
+        item = _item_from_report_row(db, report, row)
+        employee = _employee_from_item(db, item)
+        if not employee:
+            notification = Notification(
+                automation_id=automation.id if automation else None,
+                channel=(channel or template.channel if template else channel or "email").lower(),
+                recipient=None,
+                subject=f"Falha de notificacao - Relatorio #{report.id}",
+                message=json.dumps(item, ensure_ascii=False),
+                body=json.dumps(item, ensure_ascii=False),
+                status=NOTIFICATION_ERROR,
+                error=f"Funcionario destinatario nao encontrado: {_recipient_reference_from_item(item) or 'sem referencia'}.",
+                attempts=0,
+                simulation=True,
+            )
+            db.add(notification)
+            created.append(notification)
+            continue
+
+        selected_channel = (channel or (template.channel if template else None) or employee.canal_preferencial or "email").lower()
+        recipient = _recipient_for_channel(employee, selected_channel)
+        if not recipient and selected_channel != "email":
+            selected_channel = "email"
+            recipient = _recipient_for_channel(employee, selected_channel)
+
+        variables = _report_template_variables(report, employee, item)
+        rendered_subject = render_template(
+            subject_template or (template.subject if template else 'ASMDIGITAL - Notificacao do relatorio "{{nome_rotina}}"'),
+            variables,
+        )
+        rendered_message = render_template(message_template or (template.body if template else _default_template()), variables)
+        notification = Notification(
+            automation_id=automation.id if automation else None,
+            employee_id=employee.id,
+            channel=selected_channel,
+            recipient=recipient,
+            to_ref=_manager_delivery_ref(employee.manager, _recipient_for_channel(employee.manager, selected_channel)) if notify_manager and employee.manager and _recipient_for_channel(employee.manager, selected_channel) else recipient,
+            subject=rendered_subject,
+            message=rendered_message,
+            body=rendered_message,
+            status=NOTIFICATION_PENDING_APPROVAL if requires_approval else NOTIFICATION_PENDING,
+            simulation=simulation,
+        )
+        if not employee.recebe_notificacao:
+            notification.status = NOTIFICATION_CANCELLED
+            notification.error = "Funcionario optou por nao receber notificacoes."
+        elif not recipient:
+            notification.status = NOTIFICATION_ERROR
+            notification.error = f"Destinatario sem endereco para canal {selected_channel}."
+        elif not requires_approval:
+            _dispatch_notification(notification, simulation=simulation)
+        db.add(notification)
+        created.append(notification)
+
+    db.commit()
+    for notification in created:
+        db.refresh(notification)
+    return created
+
+
+def _report_notification_template(db: Session, template_id: int | None, channel: str | None) -> NotificationTemplate | None:
+    query = db.query(NotificationTemplate).filter(NotificationTemplate.is_active.is_(True))
+    if template_id:
+        return query.filter(NotificationTemplate.id == template_id).first()
+    if channel:
+        query = query.filter(NotificationTemplate.channel.ilike(channel))
+    templates = query.order_by(NotificationTemplate.id.asc()).all()
+    if not templates:
+        return None
+    preferred = [
+        template
+        for template in templates
+        if "respons" in _normalize_lookup_text(template.name) or "pendenc" in _normalize_lookup_text(template.name)
+    ]
+    return (preferred or templates)[0]
+
+
+def _report_template_variables(report: Report, employee: Employee, item: dict[str, Any]) -> dict[str, Any]:
+    params = report.params_json or {}
+    automation_name = params.get("template_name") or f"Relatorio #{report.id}"
+    variables = dict(item)
+    variables.update(_flatten_dict(item))
+    responsible_name = _first_value(
+        item,
+        [
+            "responsavel_nome",
+            "nome_responsavel",
+            "assigned_to",
+            "assignedTo",
+            "responsavel",
+            "atribuido_para",
+            "Atribuido para",
+        ],
+    )
+    days_overdue = _first_value(item, ["dias_atraso", "days_overdue", "dias em atraso", "Dias em atraso"])
+    demand_id = _first_value(item, ["demanda_id", "id_demanda", "source_ref", "id"])
+    demand_url = _first_value(item, ["link_demanda", "redmine_issue_url", "source_url", "url"])
+    project_name = _first_value(item, ["nome_projeto", "projeto", "project", "project_id", "project_ids", "sistema", "entrega"])
+    if not project_name:
+        project_name = _project_name_from_subject(item.get("subject"))
+    variables.update(
+        {
+            "nome": employee.name,
+            "nome_destinatario": employee.name,
+            "nome_responsavel": _collapse_spaces(responsible_name) or employee.name,
+            "email": employee.email,
+            "nome_rotina": automation_name,
+            "rotina_id": params.get("template_id") or report.id,
+            "execucao_id": "",
+            "report_id": report.id,
+            "data_execucao": report.generated_at.date().isoformat() if report.generated_at else "",
+            "dias_atraso": days_overdue or "",
+            "demanda_id": demand_id or "",
+            "id_demanda": demand_id or "",
+            "link_demanda": demand_url or "",
+            "redmine_issue_url": demand_url or "",
+            "link_relatorio": item.get("link_relatorio") or f"{settings.app_public_url}/reports/redmine-deliveries?report_id={report.id}",
+            "nome_projeto": project_name or "",
+        }
+    )
+    return variables
 
 def _template_variables(automation: Automation, run: AutomationRun | None, employee: Employee, item: dict[str, Any]) -> dict[str, Any]:
     variables = dict(item)

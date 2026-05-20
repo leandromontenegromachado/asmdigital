@@ -46,3 +46,33 @@ class ReportDetail(BaseModel):
     page: int
     page_size: int
     query: Optional[str] = None
+
+
+class ReportNotificationRequest(BaseModel):
+    row_ids: list[int] | None = None
+    template_id: int | None = None
+    channel: str | None = None
+    subject: str | None = None
+    message: str | None = None
+    requires_approval: bool = False
+    notify_manager: bool = False
+    simulation: bool = False
+
+
+class ReportNotificationItemOut(BaseModel):
+    id: int
+    row_id: int | None = None
+    employee_name: str | None = None
+    recipient: str | None = None
+    status: str
+    error: str | None = None
+
+
+class ReportNotificationResponse(BaseModel):
+    report_id: int
+    total: int
+    sent: int
+    simulated: int
+    errors: int
+    pending_approval: int
+    notifications: list[ReportNotificationItemOut]

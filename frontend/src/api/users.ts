@@ -6,6 +6,8 @@ export interface User {
   email: string;
   role: string;
   is_active: boolean;
+  telegram_chat_id?: string | null;
+  telegram_username?: string | null;
   created_at: string;
 }
 
@@ -22,6 +24,8 @@ export interface UserUpdatePayload {
   email?: string;
   role?: string;
   is_active?: boolean;
+  telegram_chat_id?: string | null;
+  telegram_username?: string | null;
 }
 
 export const listUsers = async (q?: string) => {

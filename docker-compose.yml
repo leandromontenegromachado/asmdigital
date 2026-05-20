@@ -60,11 +60,26 @@
       OPENROUTER_BASE_URL: ${OPENROUTER_BASE_URL:-https://openrouter.ai/api/v1}
       OPENROUTER_SITE_URL: ${OPENROUTER_SITE_URL:-}
       OPENROUTER_APP_NAME: ${OPENROUTER_APP_NAME:-ASM Digital}
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
+      TELEGRAM_WEBHOOK_SECRET: ${TELEGRAM_WEBHOOK_SECRET:-}
+      ASSISTANT_TELEGRAM_ENABLED: ${ASSISTANT_TELEGRAM_ENABLED:-true}
+      TELEGRAM_POLLING_ENABLED: ${TELEGRAM_POLLING_ENABLED:-false}
+      TELEGRAM_POLLING_INTERVAL_SECONDS: ${TELEGRAM_POLLING_INTERVAL_SECONDS:-5}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      ASSISTANT_SPEECH_PROVIDER: ${ASSISTANT_SPEECH_PROVIDER:-local}
+      ASSISTANT_SPEECH_MODEL: ${ASSISTANT_SPEECH_MODEL:-whisper-1}
+      ASSISTANT_LOCAL_SPEECH_URL: ${ASSISTANT_LOCAL_SPEECH_URL:-http://speech:8010/transcribe}
+      GRAPH_TENANT_ID: ${GRAPH_TENANT_ID:-}
+      GRAPH_CLIENT_ID: ${GRAPH_CLIENT_ID:-}
+      GRAPH_CLIENT_SECRET: ${GRAPH_CLIENT_SECRET:-}
+      GRAPH_DEFAULT_ORGANIZER_EMAIL: ${GRAPH_DEFAULT_ORGANIZER_EMAIL:-}
     ports:
       - "8000:8000"
     depends_on:
       db:
         condition: service_healthy
+      speech:
+        condition: service_started
     healthcheck:
       test: ["CMD-SHELL", "curl -f http://localhost:8000/health || exit 1"]
       interval: 15s
@@ -84,6 +99,23 @@
       interval: 15s
       timeout: 5s
       retries: 5
+
+  speech:
+    build: ./services/speech
+    restart: unless-stopped
+    environment:
+      WHISPER_MODEL_SIZE: ${WHISPER_MODEL_SIZE:-small}
+      WHISPER_DEVICE: ${WHISPER_DEVICE:-cpu}
+      WHISPER_COMPUTE_TYPE: ${WHISPER_COMPUTE_TYPE:-int8}
+      WHISPER_BEAM_SIZE: ${WHISPER_BEAM_SIZE:-8}
+      WHISPER_BEST_OF: ${WHISPER_BEST_OF:-5}
+    volumes:
+      - whisper_models:/models
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8010/health || exit 1"]
+      interval: 20s
+      timeout: 10s
+      retries: 10
 
   redmine-mcp:
     build: ./mcp/redmine
@@ -119,3 +151,4 @@
 
 volumes:
   db_data:
+  whisper_models:

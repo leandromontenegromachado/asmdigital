@@ -58,6 +58,19 @@ class Settings(BaseSettings):
     openrouter_base_url: str = "https://openrouter.ai/api/v1"
     openrouter_site_url: str | None = None
     openrouter_app_name: str = "ASM Digital"
+    telegram_bot_token: str | None = None
+    telegram_webhook_secret: str | None = None
+    assistant_telegram_enabled: bool = True
+    telegram_polling_enabled: bool = False
+    telegram_polling_interval_seconds: int = 5
+    openai_api_key: str | None = None
+    assistant_speech_provider: str = "local"
+    assistant_speech_model: str = "whisper-1"
+    assistant_local_speech_url: str = "http://speech:8010/transcribe"
+    graph_tenant_id: str | None = None
+    graph_client_id: str | None = None
+    graph_client_secret: str | None = None
+    graph_default_organizer_email: str | None = None
 
 
 settings = Settings()

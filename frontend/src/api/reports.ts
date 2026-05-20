@@ -60,3 +60,37 @@ export const exportReportCsv = (id: number) => {
 export const exportReportPdf = (id: number) => {
   return api.get(`/reports/${id}/export.pdf`, { responseType: 'blob' });
 };
+
+export interface ReportNotificationResponse {
+  report_id: number;
+  total: number;
+  sent: number;
+  simulated: number;
+  errors: number;
+  pending_approval: number;
+  notifications: Array<{
+    id: number;
+    row_id?: number | null;
+    employee_name?: string | null;
+    recipient?: string | null;
+    status: string;
+    error?: string | null;
+  }>;
+}
+
+export const sendReportNotifications = async (
+  id: number,
+  payload: {
+    row_ids?: number[];
+    template_id?: number | null;
+    channel?: string | null;
+    subject?: string | null;
+    message?: string | null;
+    requires_approval?: boolean;
+    notify_manager?: boolean;
+    simulation?: boolean;
+  } = {},
+) => {
+  const { data } = await api.post<ReportNotificationResponse>(`/reports/${id}/notifications/send`, payload);
+  return data;
+};

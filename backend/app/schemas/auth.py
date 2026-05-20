@@ -17,6 +17,8 @@ class UserOut(BaseModel):
     email: EmailStr
     role: str
     is_active: bool
+    telegram_chat_id: str | None = None
+    telegram_username: str | None = None
 
     class Config:
         from_attributes = True

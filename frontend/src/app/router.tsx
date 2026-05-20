@@ -16,6 +16,7 @@ import NotificationsPage from '../pages/NotificationsPage';
 import ManagementEventRulesPage from '../pages/ManagementEventRulesPage';
 import AiModelsPage from '../pages/AiModelsPage';
 import FalaAiPage from '../pages/FalaAiPage';
+import AssistantPage from '../pages/AssistantPage';
 import EvaluationCyclesPage from '../pages/EvaluationCyclesPage';
 import EvaluationAiReportPage from '../pages/EvaluationAiReportPage';
 import EvaluationImportsPage from '../pages/EvaluationImportsPage';
@@ -42,6 +43,8 @@ export const router = createBrowserRouter([
       { path: 'automations', element: <RoutinesPage /> },
       { path: 'chefia', element: <FalaAiPage /> },
       { path: 'fala-ai', element: <FalaAiPage /> },
+      { path: 'assistant', element: <AssistantPage /> },
+      { path: 'assistente-gestao', element: <AssistantPage /> },
       { path: 'automation', element: <RoutinesPage /> },
       { path: 'routines', element: <RoutinesPage /> },
       { path: 'rotinas', element: <RoutinesPage /> },

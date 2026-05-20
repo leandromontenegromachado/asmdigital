@@ -1134,3 +1134,86 @@ docs
 - Configurar `APP_PUBLIC_URL` corretamente no servidor.
 - Manter VPN ativa para integrações internas.
 - Para notificações reais por email, configurar SMTP antes de ativar regras em produção.
+## Assistente de Gestao Multicanal
+
+O ASM Digital possui um nucleo central de assistente em `app/assistant`. Ele permite receber comandos por canais diferentes sem acoplar a regra de negocio ao Telegram.
+
+Canais previstos:
+
+- Telegram
+- Atalho de voz do celular
+- Teams
+- Interface web
+- Rotinas agendadas
+
+Endpoint principal:
+
+```http
+POST /api/assistant/commands
+Authorization: Bearer <token>
+Content-Type: application/json
+```
+
+Exemplo:
+
+```json
+{
+  "text": "listar projetos em atraso",
+  "user_id": "leandro",
+  "user_name": "Leandro",
+  "channel": "voice_shortcut",
+  "metadata": {
+    "source": "android_tasker"
+  }
+}
+```
+
+Atalho de voz:
+
+```http
+POST /api/assistant/voice-command
+Authorization: Bearer <token>
+```
+
+```json
+{
+  "text": "listar projetos em atraso",
+  "user_id": "leandro",
+  "source": "ios_shortcuts"
+}
+```
+
+Acoes que exigem confirmacao retornam `requires_confirmation=true` e um `confirmation_id`.
+
+Confirmar:
+
+```http
+POST /api/assistant/confirmations/{confirmation_id}
+Authorization: Bearer <token>
+```
+
+```json
+{
+  "confirmed": true,
+  "channel": "web"
+}
+```
+
+Telegram:
+
+- O Telegram continua usando o webhook ou polling ja existente.
+- Mensagens de texto e audio sao convertidas para `AssistantCommand`.
+- Intencoes novas passam pelo Assistant Core.
+- Pedidos de reuniao ainda caem no fluxo legado de agendamento para preservar compatibilidade.
+
+Intencoes iniciais:
+
+- `LIST_LATE_PROJECTS`
+- `NOTIFY_RESPONSIBLES`
+- `CREATE_MEETING`
+- `HELP`
+- `UNKNOWN`
+
+Historico:
+
+- Os comandos processados pelo nucleo sao gravados em `assistant_command_logs`.

@@ -175,6 +175,24 @@ export const Sidebar: React.FC = () => {
         </NavLink>
 
         <NavLink
+          to="/assistente-gestao"
+          className={({ isActive }) =>
+            `${linkBase} ${
+              isActive
+                ? 'bg-blue-50 border-primary'
+                : 'hover:bg-slate-50 border-transparent'
+            }`
+          }
+        >
+          {({ isActive }) => (
+            <>
+              <Bot className={isActive ? 'text-primary' : 'text-slate-400 group-hover:text-primary'} size={20} />
+              <p className={`text-sm ${isActive ? 'font-bold text-slate-900' : 'font-medium text-slate-600 group-hover:text-slate-900'} transition-colors`}>Assistente</p>
+            </>
+          )}
+        </NavLink>
+
+        <NavLink
           to="/automations"
           className={({ isActive }) =>
             `${linkBase} ${

@@ -113,6 +113,12 @@ def extract_bot_context(payload: dict[str, Any]) -> dict[str, str | None]:
 
 
 def _send_webhook_message(webhook_url: str, message: str) -> None:
+    normalized_url = (webhook_url or "").strip().lower()
+    if "/api/fala-ai/webhook/teams" in normalized_url:
+        raise RuntimeError(
+            "FALA_AI_TEAMS_OUTGOING_WEBHOOK deve ser a URL de Incoming Webhook do Teams, "
+            "nao a URL publica do endpoint /api/fala-ai/webhook/teams do ASM Digital."
+        )
     payload = {"text": message}
     response = httpx.post(webhook_url, json=payload, timeout=20)
     response.raise_for_status()

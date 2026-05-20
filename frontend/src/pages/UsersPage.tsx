@@ -12,6 +12,8 @@ const defaultForm = {
   password: '',
   role: 'funcionario',
   is_active: true,
+  telegram_chat_id: '',
+  telegram_username: '',
 };
 
 const roleOptions = [
@@ -65,6 +67,8 @@ const UsersPage: React.FC = () => {
       password: '',
       role: user.role === 'viewer' ? 'funcionario' : user.role,
       is_active: user.is_active,
+      telegram_chat_id: user.telegram_chat_id || '',
+      telegram_username: user.telegram_username || '',
     });
     setModalOpen(true);
   };
@@ -77,6 +81,8 @@ const UsersPage: React.FC = () => {
           email: form.email,
           role: form.role,
           is_active: form.is_active,
+          telegram_chat_id: form.telegram_chat_id.trim() || null,
+          telegram_username: form.telegram_username.trim() || null,
         });
       } else {
         await createUser({
@@ -282,6 +288,26 @@ const UsersPage: React.FC = () => {
                 <option value="active">Ativo</option>
                 <option value="inactive">Inativo</option>
               </select>
+            </div>
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            <div className="flex flex-col gap-2">
+              <label className="text-sm font-semibold text-slate-700">Telegram chat ID</label>
+              <input
+                className="rounded-lg border border-slate-200 px-3 py-2"
+                value={form.telegram_chat_id}
+                onChange={(e) => setForm((prev) => ({ ...prev, telegram_chat_id: e.target.value }))}
+                placeholder="Ex.: 123456789"
+              />
+            </div>
+            <div className="flex flex-col gap-2">
+              <label className="text-sm font-semibold text-slate-700">Telegram username</label>
+              <input
+                className="rounded-lg border border-slate-200 px-3 py-2"
+                value={form.telegram_username}
+                onChange={(e) => setForm((prev) => ({ ...prev, telegram_username: e.target.value }))}
+                placeholder="Opcional"
+              />
             </div>
           </div>
           <div className="flex justify-end gap-2">

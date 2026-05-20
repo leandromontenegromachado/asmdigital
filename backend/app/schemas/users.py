@@ -10,6 +10,8 @@ class UserOut(BaseModel):
     email: EmailStr
     role: str
     is_active: bool
+    telegram_chat_id: str | None = None
+    telegram_username: str | None = None
     created_at: datetime
 
     class Config:
@@ -29,6 +31,8 @@ class UserUpdate(BaseModel):
     email: Optional[EmailStr] = None
     role: Optional[str] = None
     is_active: Optional[bool] = None
+    telegram_chat_id: Optional[str] = None
+    telegram_username: Optional[str] = None
 
 
 class UserPasswordReset(BaseModel):

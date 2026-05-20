@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { Download, Play } from 'lucide-react';
+import { Download, Play, Send } from 'lucide-react';
 import { useSearchParams } from 'react-router-dom';
 import { AppShell } from '../components/AppShell';
 import { Topbar } from '../components/Topbar';
@@ -7,8 +7,14 @@ import { StateBlock } from '../components/StateBlock';
 import { Table } from '../components/Table';
 import { Toasts, ToastItem } from '../components/Toasts';
 import { listConnectors, listRedmineQueries, Connector, RedmineQuery } from '../api/connectors';
-import { generateRedmineReport, getReport, exportReportCsv, exportReportPdf, ReportDetail } from '../api/reports';
+import { generateRedmineReport, getReport, exportReportCsv, exportReportPdf, sendReportNotifications, ReportDetail } from '../api/reports';
 import { runPromptReportTemplate } from '../api/promptReports';
+import { listNotificationTemplates, NotificationTemplate } from '../api/notifications';
+
+type NotificationModalState = {
+  rowIds?: number[];
+  mode: 'single' | 'all';
+};
 
 const ReportsRedminePage: React.FC = () => {
   const [searchParams, setSearchParams] = useSearchParams();
@@ -31,6 +37,16 @@ const ReportsRedminePage: React.FC = () => {
   const [toasts, setToasts] = useState<ToastItem[]>([]);
   const [editablePrompt, setEditablePrompt] = useState('');
   const [rerunning, setRerunning] = useState(false);
+  const [notifyingAll, setNotifyingAll] = useState(false);
+  const [notifyingRows, setNotifyingRows] = useState<Record<number, boolean>>({});
+  const [notificationTemplates, setNotificationTemplates] = useState<NotificationTemplate[]>([]);
+  const [notificationModal, setNotificationModal] = useState<NotificationModalState | null>(null);
+  const [notificationTemplateId, setNotificationTemplateId] = useState('');
+  const [notificationChannel, setNotificationChannel] = useState('email');
+  const [notificationSubject, setNotificationSubject] = useState('');
+  const [notificationMessage, setNotificationMessage] = useState('');
+  const [notificationRequiresApproval, setNotificationRequiresApproval] = useState(false);
+  const [notificationNotifyManager, setNotificationNotifyManager] = useState(false);
   const reportIdParam = searchParams.get('report_id');
   const isViewingExistingReport = Boolean(reportIdParam);
 
@@ -53,6 +69,12 @@ const ReportsRedminePage: React.FC = () => {
 
   useEffect(() => {
     loadConnectors();
+  }, []);
+
+  useEffect(() => {
+    listNotificationTemplates()
+      .then(setNotificationTemplates)
+      .catch(() => setNotificationTemplates([]));
   }, []);
 
   useEffect(() => {
@@ -318,6 +340,68 @@ const ReportsRedminePage: React.FC = () => {
     link.remove();
   };
 
+  const notificationSummary = (result: Awaited<ReturnType<typeof sendReportNotifications>>) => {
+    const parts = [
+      result.sent ? `${result.sent} enviada(s)` : '',
+      result.pending_approval ? `${result.pending_approval} aguardando aprovacao` : '',
+      result.simulated ? `${result.simulated} simulada(s)` : '',
+      result.errors ? `${result.errors} com erro` : '',
+    ].filter(Boolean);
+    return parts.length ? parts.join(', ') : 'Nenhuma notificacao criada.';
+  };
+
+  const openNotificationModal = (rowIds?: number[]) => {
+    const firstTemplate = notificationTemplates.find((item) => item.channel === notificationChannel) || notificationTemplates[0];
+    setNotificationTemplateId(firstTemplate ? String(firstTemplate.id) : '');
+    setNotificationChannel(firstTemplate?.channel || 'email');
+    setNotificationSubject('');
+    setNotificationMessage('');
+    setNotificationRequiresApproval(false);
+    setNotificationNotifyManager(false);
+    setNotificationModal({ rowIds, mode: rowIds?.length === 1 ? 'single' : 'all' });
+  };
+
+  const selectedNotificationTemplate = notificationTemplates.find((item) => String(item.id) === notificationTemplateId);
+
+  const handleSendNotifications = async () => {
+    if (!report) return;
+    const rowIds = notificationModal?.rowIds;
+    const isSingleRow = notificationModal?.mode === 'single' && rowIds?.length === 1;
+    if (isSingleRow) {
+      setNotifyingRows((current) => ({ ...current, [rowIds[0]]: true }));
+    } else {
+      setNotifyingAll(true);
+    }
+    setError(null);
+    try {
+      const result = await sendReportNotifications(report.report.id, {
+        ...(rowIds?.length ? { row_ids: rowIds } : {}),
+        template_id: notificationTemplateId ? Number(notificationTemplateId) : null,
+        channel: notificationChannel || null,
+        subject: notificationSubject.trim() || null,
+        message: notificationMessage.trim() || null,
+        requires_approval: notificationRequiresApproval,
+        notify_manager: notificationNotifyManager,
+      });
+      pushToast({
+        title: isSingleRow ? 'Notificacao encaminhada' : 'Notificacoes encaminhadas',
+        description: notificationSummary(result),
+        tone: result.errors ? 'info' : 'success',
+      });
+      setNotificationModal(null);
+    } catch (err: any) {
+      const detail = err?.response?.data?.detail || 'Falha ao encaminhar notificacao.';
+      setError(String(detail));
+      pushToast({ title: 'Falha ao notificar', description: String(detail), tone: 'error' });
+    } finally {
+      if (isSingleRow) {
+        setNotifyingRows((current) => ({ ...current, [rowIds[0]]: false }));
+      } else {
+        setNotifyingAll(false);
+      }
+    }
+  };
+
   const hasRedmineDetails = Boolean(report?.rows.some((row) => row.raw_json));
   type ReportDisplayRow = ReportDetail['rows'][number] & {
     [key: string]: any;
@@ -331,6 +415,7 @@ const ReportsRedminePage: React.FC = () => {
     tipo: string;
     autor: string;
     percentual_concluido: string | number;
+    acoes?: React.ReactNode;
   };
   const promptColumnMap: Record<string, { key: keyof ReportDisplayRow; label: string }> = {
     source_ref: { key: 'source_ref', label: 'ID' },
@@ -384,8 +469,11 @@ const ReportsRedminePage: React.FC = () => {
         { key: 'source_ref', label: 'source_ref' },
         { key: 'source_url', label: 'source_url' },
       ];
+  const visibleColumns: { key: keyof ReportDisplayRow; label: string }[] =
+    report && hasRedmineDetails ? [...reportColumns, { key: 'acoes', label: 'Notificacao' }] : reportColumns;
   const reportRows: ReportDisplayRow[] = (report?.rows || []).map((row) => {
     const raw = row.raw_json || {};
+    const isNotifying = Boolean(notifyingRows[row.id]);
     return {
       ...raw,
       ...row,
@@ -399,6 +487,17 @@ const ReportsRedminePage: React.FC = () => {
       tipo: raw.tracker || '',
       autor: raw.author || '',
       percentual_concluido: raw.done_ratio ?? '',
+      acoes: hasRedmineDetails ? (
+        <button
+          type="button"
+          onClick={() => openNotificationModal([row.id])}
+          disabled={isNotifying || notifyingAll}
+          className="inline-flex min-h-9 items-center gap-2 rounded-lg border border-cyan-200 px-3 py-2 text-xs font-bold text-cyan-700 hover:bg-cyan-50 disabled:cursor-not-allowed disabled:opacity-60"
+        >
+          <Send size={14} />
+          {isNotifying ? 'Enviando...' : 'Enviar'}
+        </button>
+      ) : undefined,
     };
   });
   const reportParams = report?.report.params_json || {};
@@ -474,6 +573,17 @@ const ReportsRedminePage: React.FC = () => {
             </div>
           )}
           <div className="mt-4 flex flex-wrap gap-3">
+            {hasRedmineDetails && reportRows.length > 0 && (
+              <button
+                type="button"
+                onClick={() => openNotificationModal()}
+                disabled={notifyingAll}
+                className="flex items-center gap-2 rounded-lg bg-cyan-600 px-4 py-2 text-sm font-bold text-white shadow-sm hover:bg-cyan-700 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                <Send size={16} />
+                {notifyingAll ? 'Enviando...' : 'Enviar para todos'}
+              </button>
+            )}
             <button
               onClick={handleExport}
               className="flex items-center gap-2 rounded-lg border border-slate-200 px-4 py-2 text-sm font-semibold text-slate-700"
@@ -673,7 +783,7 @@ const ReportsRedminePage: React.FC = () => {
       {report && (
         <section className="flex flex-col gap-4">
           <Table
-            columns={reportColumns}
+            columns={visibleColumns}
             data={reportRows}
             emptyMessage="Nenhum registro encontrado para o periodo."
           />
@@ -699,6 +809,121 @@ const ReportsRedminePage: React.FC = () => {
             </div>
           </div>
         </section>
+      )}
+      {notificationModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 px-4 py-6">
+          <div className="max-h-[90vh] w-full max-w-3xl overflow-y-auto rounded-2xl bg-white shadow-2xl">
+            <div className="border-b border-slate-100 px-6 py-5">
+              <p className="text-xs font-bold uppercase tracking-wide text-cyan-700">
+                {notificationModal.mode === 'single' ? 'Notificacao de um registro' : 'Notificacao em massa'}
+              </p>
+              <h2 className="mt-1 text-2xl font-bold text-slate-900">Configurar envio</h2>
+              <p className="mt-1 text-sm text-slate-500">
+                Escolha um template pronto ou informe uma mensagem especifica para este envio.
+              </p>
+            </div>
+
+            <div className="grid gap-4 px-6 py-5 md:grid-cols-2">
+              <label className="flex flex-col gap-2 text-sm font-semibold text-slate-700">
+                Template
+                <select
+                  className="rounded-lg border border-slate-200 px-3 py-2 font-normal"
+                  value={notificationTemplateId}
+                  onChange={(event) => {
+                    const nextId = event.target.value;
+                    setNotificationTemplateId(nextId);
+                    const template = notificationTemplates.find((item) => String(item.id) === nextId);
+                    if (template?.channel) setNotificationChannel(template.channel);
+                  }}
+                >
+                  <option value="">Usar mensagem padrao</option>
+                  {notificationTemplates.map((template) => (
+                    <option key={template.id} value={template.id}>
+                      {template.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+
+              <label className="flex flex-col gap-2 text-sm font-semibold text-slate-700">
+                Canal
+                <select
+                  className="rounded-lg border border-slate-200 px-3 py-2 font-normal"
+                  value={notificationChannel}
+                  onChange={(event) => setNotificationChannel(event.target.value)}
+                >
+                  <option value="email">Email</option>
+                  <option value="teams">Teams</option>
+                  <option value="internal">Interna</option>
+                </select>
+              </label>
+
+              <label className="flex flex-col gap-2 text-sm font-semibold text-slate-700 md:col-span-2">
+                Assunto especifico
+                <input
+                  className="rounded-lg border border-slate-200 px-3 py-2 font-normal"
+                  placeholder={selectedNotificationTemplate?.subject || 'Opcional. Se vazio, usa o template selecionado.'}
+                  value={notificationSubject}
+                  onChange={(event) => setNotificationSubject(event.target.value)}
+                />
+              </label>
+
+              <label className="flex flex-col gap-2 text-sm font-semibold text-slate-700 md:col-span-2">
+                Mensagem especifica
+                <textarea
+                  className="min-h-44 rounded-lg border border-slate-200 px-3 py-2 font-mono text-sm font-normal"
+                  placeholder={selectedNotificationTemplate?.body || 'Opcional. Use variaveis como {{nome_responsavel}}, {{subject}}, {{link_demanda}} e {{link_relatorio}}.'}
+                  value={notificationMessage}
+                  onChange={(event) => setNotificationMessage(event.target.value)}
+                />
+              </label>
+
+              <label className="flex items-center gap-2 text-sm font-semibold text-slate-700 md:col-span-2">
+                <input
+                  type="checkbox"
+                  checked={notificationRequiresApproval}
+                  onChange={(event) => setNotificationRequiresApproval(event.target.checked)}
+                />
+                Exigir aprovacao antes do envio
+              </label>
+
+              <label className="flex items-center gap-2 text-sm font-semibold text-slate-700 md:col-span-2">
+                <input
+                  type="checkbox"
+                  checked={notificationNotifyManager}
+                  onChange={(event) => setNotificationNotifyManager(event.target.checked)}
+                />
+                Enviar copia para o gestor do responsavel
+              </label>
+
+              <div className="rounded-xl bg-slate-50 p-4 text-xs text-slate-600 md:col-span-2">
+                <p className="font-bold text-slate-700">Variaveis disponiveis mais usadas</p>
+                <p className="mt-1">
+                  {'{{nome_responsavel}}, {{nome_rotina}}, {{subject}}, {{status}}, {{due_date}}, {{dias_atraso}}, {{demanda_id}}, {{link_demanda}}, {{link_relatorio}}'}
+                </p>
+              </div>
+            </div>
+
+            <div className="flex flex-col-reverse gap-3 border-t border-slate-100 px-6 py-4 sm:flex-row sm:justify-end">
+              <button
+                type="button"
+                onClick={() => setNotificationModal(null)}
+                className="rounded-lg border border-slate-200 px-4 py-2 text-sm font-bold text-slate-700 hover:bg-slate-50"
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                onClick={handleSendNotifications}
+                disabled={notifyingAll || Object.values(notifyingRows).some(Boolean)}
+                className="inline-flex items-center justify-center gap-2 rounded-lg bg-cyan-600 px-4 py-2 text-sm font-bold text-white hover:bg-cyan-700 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                <Send size={16} />
+                {notifyingAll || Object.values(notifyingRows).some(Boolean) ? 'Enviando...' : 'Enviar notificacao'}
+              </button>
+            </div>
+          </div>
+        </div>
       )}
       <Toasts items={toasts} />
     </AppShell>
