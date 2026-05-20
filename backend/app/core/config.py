@@ -67,6 +67,8 @@ class Settings(BaseSettings):
     assistant_speech_provider: str = "local"
     assistant_speech_model: str = "whisper-1"
     assistant_local_speech_url: str = "http://speech:8010/transcribe"
+    assistant_voice_shortcut_token: str | None = None
+    assistant_voice_shortcut_user_email: str | None = None
     graph_tenant_id: str | None = None
     graph_client_id: str | None = None
     graph_client_secret: str | None = None

@@ -75,6 +75,45 @@ def process_voice_shortcut_command(
     return AssistantCoreService(db).process_command(command, user=user)
 
 
+@router.post("/voice-shortcut", response_model=AssistantResponse)
+def process_public_voice_shortcut(
+    payload: VoiceCommandRequest,
+    authorization: str | None = Header(default=None),
+    db: Session = Depends(get_db),
+):
+    expected_token = (settings.assistant_voice_shortcut_token or "").strip()
+    if not expected_token:
+        raise HTTPException(status_code=503, detail="Voice shortcut token is not configured")
+    provided_token = (authorization or "").replace("Bearer ", "", 1).strip()
+    if provided_token != expected_token:
+        raise HTTPException(status_code=403, detail="Invalid voice shortcut token")
+
+    user = None
+    if settings.assistant_voice_shortcut_user_email:
+        user = (
+            db.query(User)
+            .filter(User.email == settings.assistant_voice_shortcut_user_email.strip().lower(), User.is_active.is_(True))
+            .first()
+        )
+    command = build_voice_shortcut_command(payload).model_copy(
+        update={
+            "channel": "voice_shortcut",
+            "user_id": payload.user_id or (str(user.id) if user else "voice_shortcut"),
+            "user_name": user.name if user else payload.user_id,
+        }
+    )
+    response = AssistantCoreService(db).process_command(command, user=user)
+    if response.message == "LEGACY_ASSISTANT_FALLBACK":
+        return AssistantResponse(
+            success=False,
+            intent="CREATE_MEETING",
+            action="legacy_assistant_service",
+            message="Pedidos de reuniao por atalho de voz ainda precisam ser confirmados no canal autenticado.",
+            errors=["confirmation_channel_required"],
+        )
+    return response
+
+
 @router.post("/confirmations/{confirmation_id}", response_model=AssistantResponse)
 def confirm_assistant_core_action(
     confirmation_id: str,

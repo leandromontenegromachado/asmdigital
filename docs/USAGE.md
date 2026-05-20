@@ -1183,6 +1183,35 @@ Authorization: Bearer <token>
 }
 ```
 
+Acesso direto por atalho do celular sem JWT:
+
+Configure no `.env`:
+
+```env
+ASSISTANT_VOICE_SHORTCUT_TOKEN=um-token-longo-e-secreto
+ASSISTANT_VOICE_SHORTCUT_USER_EMAIL=admin@company.com
+```
+
+Chamada:
+
+```http
+POST /api/assistant/voice-shortcut
+Authorization: Bearer um-token-longo-e-secreto
+Content-Type: application/json
+```
+
+Body:
+
+```json
+{
+  "text": "listar projetos em atraso",
+  "user_id": "leandro",
+  "source": "ios_shortcuts"
+}
+```
+
+Esse endpoint foi feito para atalhos do iOS, Android Tasker, MacroDroid ou automacoes equivalentes. Ele usa um token de canal, nao o token JWT de login do usuario.
+
 Acoes que exigem confirmacao retornam `requires_confirmation=true` e um `confirmation_id`.
 
 Confirmar:
