@@ -318,6 +318,48 @@ def _parse_prompt_numeric_filters(prompt: str) -> list[dict[str, Any]]:
     return filters
 
 
+def _parse_empty_field_filters(prompt: str) -> list[dict[str, Any]]:
+    normalized = _normalize_prompt_text(prompt)
+    filters: list[dict[str, Any]] = []
+    if re.search(
+        r"(?:data\s+prevista|vencimento)[^\r\n.]{0,40}?(?:vazi[ao]|em\s+branco|sem\s+(?:uma\s+)?data|nao\s+informad[ao])",
+        normalized,
+        flags=re.IGNORECASE,
+    ) or re.search(
+        r"(?:sem\s+(?:uma\s+)?data\s+prevista|sem\s+vencimento)",
+        normalized,
+        flags=re.IGNORECASE,
+    ):
+        filters.append({"field": "due_date", "operator": "is_empty"})
+    return filters
+
+
+def _parse_updated_age_filters(prompt: str) -> list[dict[str, Any]]:
+    normalized = _normalize_prompt_text(prompt)
+    patterns = [
+        r"(?:alterad[ao]|atualizad[ao]|data\s+de\s+atualizacao|data\s+de\s+alteracao)[^\r\n.]{0,80}?(?:mais\s+de|maior\s+que|ha\s+mais\s+de)\s*(\d+)\s+dias",
+        r"(?:mais\s+de|maior\s+que|ha\s+mais\s+de)\s*(\d+)\s+dias[^\r\n.]{0,80}?(?:alterad[ao]|atualizad[ao]|data\s+de\s+atualizacao|data\s+de\s+alteracao)",
+    ]
+    for pattern in patterns:
+        match = re.search(pattern, normalized, flags=re.IGNORECASE)
+        if match:
+            days = max(1, int(match.group(1)))
+            threshold = date.today() - timedelta(days=days)
+            return [{"field": "updated_on", "operator": "lt", "value": threshold.isoformat()}]
+    return []
+
+
+def _parse_prompt_sort(prompt: str) -> list[dict[str, str]]:
+    normalized = _normalize_prompt_text(prompt)
+    if re.search(r"orden[ea]?\s+(?:pelo|por|pela)?\s*(?:responsavel|atribuido(?:\s+para)?)", normalized):
+        return [{"field": "assigned_to", "direction": "asc"}]
+    if re.search(r"orden[ea]?\s+(?:pelo|por|pela)?\s*(?:data\s+prevista|vencimento)", normalized):
+        return [{"field": "due_date", "direction": "asc"}]
+    if re.search(r"orden[ea]?\s+(?:pelo|por|pela)?\s*(?:alterad[ao]|atualizad[ao])", normalized):
+        return [{"field": "updated_on", "direction": "desc"}]
+    return []
+
+
 def _parse_assignee_filters(prompt: str) -> list[dict[str, Any]]:
     normalized = _normalize_prompt_text(prompt)
     patterns = [
@@ -363,7 +405,9 @@ def _append_prompt_filters(prompt_options: dict[str, Any], filters: list[dict[st
         (
             str(item.get("field")),
             str(item.get("operator")),
-            tuple(str(value) for value in item.get("values", []) if value is not None),
+            tuple(str(value) for value in item.get("values", []) if value is not None)
+            if isinstance(item.get("values"), list)
+            else (str(item.get("value")),),
         )
         for item in existing
         if isinstance(item, dict)
@@ -372,7 +416,9 @@ def _append_prompt_filters(prompt_options: dict[str, Any], filters: list[dict[st
         key = (
             str(item.get("field")),
             str(item.get("operator")),
-            tuple(str(value) for value in item.get("values", []) if value is not None),
+            tuple(str(value) for value in item.get("values", []) if value is not None)
+            if isinstance(item.get("values"), list)
+            else (str(item.get("value")),),
         )
         if key not in seen:
             existing.append(item)
@@ -734,12 +780,24 @@ def _parse_prompt_filters(
             }
 
     numeric_filters = _parse_prompt_numeric_filters(prompt)
-    if numeric_filters:
-        output["prompt_options"] = _append_prompt_filters(output["prompt_options"], numeric_filters)
+    deterministic_filters = [
+        *numeric_filters,
+        *_parse_empty_field_filters(prompt),
+        *_parse_updated_age_filters(prompt),
+    ]
+    if deterministic_filters:
+        output["prompt_options"] = _append_prompt_filters(output["prompt_options"], deterministic_filters)
 
     assignee_filters = _parse_assignee_filters(prompt)
     if assignee_filters:
         output["prompt_options"] = _append_prompt_filters(output["prompt_options"], assignee_filters)
+
+    deterministic_sort = _parse_prompt_sort(prompt)
+    if deterministic_sort:
+        output["prompt_options"] = {
+            **output["prompt_options"],
+            "sort": deterministic_sort,
+        }
 
     output["prompt_options"] = {
         **output["prompt_options"],
@@ -752,8 +810,15 @@ def _parse_prompt_filters(
             raw_plan, interpreter_model = ai_result
             plan = _normalize_prompt_plan(raw_plan)
             output = _apply_prompt_plan(output, plan)
+            if deterministic_filters:
+                output["prompt_options"] = _append_prompt_filters(output["prompt_options"], deterministic_filters)
             if assignee_filters:
                 output["prompt_options"] = _append_prompt_filters(output["prompt_options"], assignee_filters)
+            if deterministic_sort:
+                output["prompt_options"] = {
+                    **output["prompt_options"],
+                    "sort": deterministic_sort,
+                }
             if output["status_id"] == "open" and not _has_explicit_period(prompt):
                 output["prompt_options"] = {
                     **output["prompt_options"],
@@ -779,6 +844,15 @@ def _parse_prompt_filters(
                 "interpreter_source": cached_options.get("interpreter", "gemini"),
                 "interpreter_error": str(exc),
             }
+            if deterministic_filters:
+                output["prompt_options"] = _append_prompt_filters(output["prompt_options"], deterministic_filters)
+            if assignee_filters:
+                output["prompt_options"] = _append_prompt_filters(output["prompt_options"], assignee_filters)
+            if deterministic_sort:
+                output["prompt_options"] = {
+                    **output["prompt_options"],
+                    "sort": deterministic_sort,
+                }
     else:
         output["prompt_options"] = {
             **output["prompt_options"],

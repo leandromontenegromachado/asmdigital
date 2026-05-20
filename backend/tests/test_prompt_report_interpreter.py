@@ -61,10 +61,30 @@ def test_fallback_parser_understands_do_not_bring_status_phrase(monkeypatch):
         "e nao trazer demandas com status de homologada e homologacao"
     )
 
-    options = _parse_prompt_filters(prompt, {})["prompt_options"]
+    monkeypatch.setattr("app.services.prompt_report_service._call_prompt_interpreter_ai", lambda *args, **kwargs: None)
+
+    options = _parse_prompt_filters(None, prompt, {})["prompt_options"]
 
     assert {"field": "status", "operator": "neq", "values": ["homologada", "homologacao"]} in options["exclude_field_values"]
     assert _is_rejected_by_prompt_filters(
         {"status": "Homologacao"},
         [{"field": "status", "operator": "not_in", "values": ["homologada", "homologacao"]}],
     )
+
+
+def test_fallback_parser_understands_empty_due_date_and_old_update(monkeypatch):
+    monkeypatch.setattr("app.services.prompt_report_service.settings.fala_ai_gemini_api_key", None)
+    monkeypatch.setattr("app.services.prompt_report_service._call_prompt_interpreter_ai", lambda *args, **kwargs: None)
+    prompt = (
+        "Quero um relatorio que liste as demandas em execucao com data prevista vazia "
+        "e data de atualizacao com mais de 8 dias da data de hoje. Ordene pelo responsavel."
+    )
+
+    options = _parse_prompt_filters(None, prompt, {"project_ids": ["asm-dem"]})["prompt_options"]
+
+    assert {"field": "due_date", "operator": "is_empty"} in options["prompt_filters"]
+    assert any(
+        item.get("field") == "updated_on" and item.get("operator") == "lt" and item.get("value")
+        for item in options["prompt_filters"]
+    )
+    assert options["sort"] == [{"field": "assigned_to", "direction": "asc"}]
