@@ -17,7 +17,6 @@ import {
   XCircle,
 } from 'lucide-react';
 import { AppShell } from '../components/AppShell';
-import { Topbar } from '../components/Topbar';
 import { StateBlock } from '../components/StateBlock';
 import {
   AssistantHistoryItem,
@@ -245,6 +244,7 @@ const AssistantPage: React.FC = () => {
   const [busyConfirmation, setBusyConfirmation] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [voiceState, setVoiceState] = useState<VoiceState>('idle');
+  const [compactLayout, setCompactLayout] = useState(false);
   const recognitionRef = useRef<any>(null);
   const chatEndRef = useRef<HTMLDivElement | null>(null);
 
@@ -304,6 +304,15 @@ const AssistantPage: React.FC = () => {
 
   useEffect(() => {
     loadPage();
+  }, []);
+
+  useEffect(() => {
+    const updateLayout = () => {
+      setCompactLayout(window.innerWidth < 1280 || window.innerHeight < 880);
+    };
+    updateLayout();
+    window.addEventListener('resize', updateLayout);
+    return () => window.removeEventListener('resize', updateLayout);
   }, []);
 
   useEffect(() => {
@@ -411,50 +420,55 @@ const AssistantPage: React.FC = () => {
 
   return (
     <AppShell>
-      <Topbar
-        title="Assistente"
-        subtitle="Comandos operacionais com interpretacao, permissao e confirmacao antes de alterar dados."
-        action={
-          <div className="flex flex-wrap items-center gap-2">
-            <button
-              onClick={handleClearScreen}
-              disabled={messages.length === 0}
-              className="inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-4 py-2.5 text-sm font-bold text-slate-700 shadow-sm hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
-            >
-              <Trash2 size={17} />
-              Limpar tela
-            </button>
-            <button
-              onClick={loadPage}
-              className="inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-4 py-2.5 text-sm font-bold text-slate-700 shadow-sm hover:bg-slate-50"
-            >
-              <RefreshCw size={17} />
-              Atualizar
-            </button>
+      <div className="flex min-h-[calc(100dvh-2rem)] flex-col gap-3 md:min-h-[calc(100dvh-3rem)] lg:min-h-[calc(100dvh-4rem)]">
+        <header className="shrink-0 rounded-2xl border border-slate-200 bg-white px-4 py-3 shadow-sm sm:px-5">
+          <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+            <div className="min-w-0">
+              <h2 className="text-2xl font-black tracking-tight text-slate-900 sm:text-3xl">Assistente</h2>
+              <p className="mt-1 max-w-3xl text-sm leading-5 text-slate-500 sm:text-base">
+                Comandos operacionais com permissao e confirmacao antes de alterar dados.
+              </p>
+            </div>
+            <div className="grid grid-cols-2 gap-2 sm:flex sm:items-center">
+              <button
+                onClick={handleClearScreen}
+                disabled={messages.length === 0}
+                className="inline-flex items-center justify-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-bold text-slate-700 shadow-sm hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                <Trash2 size={17} />
+                Limpar
+              </button>
+              <button
+                onClick={loadPage}
+                className="inline-flex items-center justify-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-bold text-slate-700 shadow-sm hover:bg-slate-50"
+              >
+                <RefreshCw size={17} />
+                Atualizar
+              </button>
+            </div>
           </div>
-        }
-      />
+        </header>
 
-      {error && <StateBlock tone="error" title="Erro" description={error} />}
-      {loading && <StateBlock tone="loading" title="Carregando assistente" description="Aguarde alguns segundos." />}
+        {error && <StateBlock tone="error" title="Erro" description={error} />}
+        {loading && <StateBlock tone="loading" title="Carregando assistente" description="Aguarde alguns segundos." />}
 
-      {!loading && (
-        <div className="grid items-start gap-4 xl:grid-cols-[minmax(0,1fr)_340px]">
-          <section className="flex h-[calc(100dvh-210px)] min-h-[420px] min-w-0 flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm sm:h-[calc(100dvh-190px)] lg:h-[calc(100dvh-170px)]">
-            <div className="shrink-0 border-b border-slate-100 bg-white px-4 py-3 sm:px-5">
+        {!loading && (
+          <div className={`grid min-h-0 flex-1 items-start gap-4 ${compactLayout ? 'grid-cols-1' : 'xl:grid-cols-[minmax(0,1fr)_340px]'}`}>
+            <section className="flex h-[calc(100dvh-136px)] min-h-[520px] min-w-0 flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm sm:h-[calc(100dvh-148px)] lg:h-[calc(100dvh-152px)]">
+              <div className="shrink-0 border-b border-slate-100 bg-white px-4 py-2.5 sm:px-5">
               <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
                 <div className="flex items-start gap-3">
                   <div className="rounded-xl border border-blue-100 bg-blue-50 p-3 text-primary">
                     <Sparkles size={24} />
                   </div>
                   <div className="min-w-0">
-                    <h3 className="text-xl font-black text-slate-900">Central de comandos</h3>
-                    <p className="mt-1 max-w-2xl text-sm leading-6 text-slate-500">
+                    <h3 className="text-lg font-black text-slate-900 sm:text-xl">Central de comandos</h3>
+                    <p className={`${compactLayout ? 'hidden md:block' : ''} mt-1 max-w-2xl text-sm leading-6 text-slate-500`}>
                       Consulte dados direto pelo chat. Acoes com impacto ficam pendentes ate voce confirmar.
                     </p>
                   </div>
                 </div>
-                <div className="grid grid-cols-3 gap-2 text-center">
+                <div className={`${compactLayout ? 'hidden lg:grid' : 'grid'} grid-cols-3 gap-2 text-center`}>
                   <div className="rounded-xl border border-slate-200 bg-white px-3 py-2">
                     <p className="text-base font-black text-slate-900">{messages.length}</p>
                     <p className="text-[11px] font-bold uppercase text-slate-500">mensagens</p>
@@ -471,7 +485,7 @@ const AssistantPage: React.FC = () => {
               </div>
             </div>
 
-            <div className="min-h-0 flex-1 space-y-4 overflow-y-auto bg-slate-50/80 px-3 py-5 sm:px-5">
+            <div className="min-h-0 flex-1 space-y-4 overflow-y-auto bg-slate-50/80 px-3 py-4 sm:px-5">
               {messages.length === 0 ? (
                 <div className="mx-auto max-w-3xl rounded-2xl border border-dashed border-slate-300 bg-white p-5 text-center shadow-sm">
                   <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl border border-blue-100 bg-blue-50 text-primary">
@@ -514,7 +528,7 @@ const AssistantPage: React.FC = () => {
               <div ref={chatEndRef} />
             </div>
 
-            <div className="sticky bottom-0 z-10 shrink-0 border-t border-slate-100 bg-white/95 p-3 shadow-[0_-12px_28px_rgba(15,23,42,0.06)] backdrop-blur sm:p-4">
+            <div className="sticky bottom-0 z-10 shrink-0 border-t border-slate-100 bg-white/95 p-3 shadow-[0_-12px_28px_rgba(15,23,42,0.06)] backdrop-blur">
               <div className="flex flex-col gap-2.5">
                 <div className="min-w-0 flex-1">
                   <textarea
@@ -559,7 +573,7 @@ const AssistantPage: React.FC = () => {
             </div>
           </section>
 
-          <aside className="grid min-w-0 gap-4 lg:grid-cols-2 xl:grid-cols-1">
+          <aside className={`${compactLayout ? 'hidden' : 'grid'} min-w-0 gap-4 lg:grid-cols-2 xl:grid-cols-1`}>
             <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
               <div className="flex items-center justify-between gap-2">
                 <div className="flex items-center gap-2">
@@ -603,9 +617,10 @@ const AssistantPage: React.FC = () => {
                 ))}
               </div>
             </section>
-          </aside>
-        </div>
-      )}
+            </aside>
+          </div>
+        )}
+      </div>
     </AppShell>
   );
 };
