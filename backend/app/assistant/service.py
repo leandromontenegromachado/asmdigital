@@ -305,7 +305,7 @@ class AssistantCoreService:
 
     def _apply_conversation_context(self, command: AssistantCommand, plan: AssistantPlan, user: User | None) -> AssistantPlan:
         normalized = self._normalize_text(command.text)
-        is_contextual = self._looks_contextual(normalized) or self._should_merge_report_context(normalized, plan)
+        is_contextual = self._looks_contextual(normalized)
         if not is_contextual:
             return plan
 
@@ -431,12 +431,6 @@ class AssistantCoreService:
             "este relatorio",
         )
         return any(marker in normalized_text for marker in markers)
-
-    def _should_merge_report_context(self, normalized_text: str, plan: AssistantPlan) -> bool:
-        if plan.domain in {"reports_redmine", "reports_ai"} and plan.action == "run_report":
-            params = plan.extracted_params or {}
-            return not params.get("owner") or len(str(params.get("text") or "").split()) <= 8
-        return any(term in normalized_text for term in ("redmine", "demandas", "demanda", "relatorio", "relatorio"))
 
     def _corrected_owner(self, text: str) -> str | None:
         patterns = [

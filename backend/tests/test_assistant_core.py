@@ -120,6 +120,45 @@ def test_contextual_source_follow_up_keeps_previous_report_params():
     assert plan.extracted_params["context"]["source"] == "follow_up"
 
 
+def test_complete_report_request_does_not_inherit_previous_text_without_context_marker():
+    service = AssistantCoreService(MagicMock())
+    previous = AssistantPlan(
+        intent="run_report",
+        domain="reports_redmine",
+        action="run_report",
+        requires_confirmation=True,
+        extracted_params={
+            "text": "Pode dizer as demandas que estao em aberto do redmine com 30 dias de atraso.",
+            "status": "open",
+            "template_id": 1,
+        },
+        permission_required="manager",
+    )
+    current = AssistantPlan(
+        intent="run_report",
+        domain="reports_redmine",
+        action="run_report",
+        requires_confirmation=True,
+        extracted_params={
+            "text": "pode gerar um relatorio com as demandas em aberto no redmine do meu setor",
+            "status": "open",
+            "template_id": 1,
+        },
+        permission_required="manager",
+    )
+
+    with patch.object(service, "_last_contextual_plan", return_value=(previous, 125)):
+        plan = service._apply_conversation_context(
+            AssistantCommand(text="pode gerar um relatorio com as demandas em aberto no redmine do meu setor", user_id="1", channel="web"),
+            current,
+            user=MagicMock(id=1, role="gerente"),
+        )
+
+    assert plan.extracted_params["text"] == "pode gerar um relatorio com as demandas em aberto no redmine do meu setor"
+    assert "30 dias" not in plan.extracted_params["text"]
+    assert "context" not in plan.extracted_params
+
+
 def test_process_read_only_action_executes_without_confirmation():
     db = MagicMock()
     service = AssistantCoreService(db)

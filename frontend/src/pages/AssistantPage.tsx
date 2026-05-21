@@ -439,9 +439,9 @@ const AssistantPage: React.FC = () => {
       {loading && <StateBlock tone="loading" title="Carregando assistente" description="Aguarde alguns segundos." />}
 
       {!loading && (
-        <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_340px]">
-          <section className="flex min-h-[calc(100vh-180px)] min-w-0 flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
-            <div className="border-b border-slate-100 bg-white px-4 py-4 sm:px-5">
+        <div className="grid items-start gap-4 xl:grid-cols-[minmax(0,1fr)_340px]">
+          <section className="flex h-[calc(100dvh-210px)] min-h-[420px] min-w-0 flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm sm:h-[calc(100dvh-190px)] lg:h-[calc(100dvh-170px)]">
+            <div className="shrink-0 border-b border-slate-100 bg-white px-4 py-3 sm:px-5">
               <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
                 <div className="flex items-start gap-3">
                   <div className="rounded-xl border border-blue-100 bg-blue-50 p-3 text-primary">
@@ -471,7 +471,7 @@ const AssistantPage: React.FC = () => {
               </div>
             </div>
 
-            <div className="flex-1 space-y-4 overflow-y-auto bg-slate-50/80 px-3 py-5 sm:px-5">
+            <div className="min-h-0 flex-1 space-y-4 overflow-y-auto bg-slate-50/80 px-3 py-5 sm:px-5">
               {messages.length === 0 ? (
                 <div className="mx-auto max-w-3xl rounded-2xl border border-dashed border-slate-300 bg-white p-5 text-center shadow-sm">
                   <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl border border-blue-100 bg-blue-50 text-primary">
@@ -514,11 +514,11 @@ const AssistantPage: React.FC = () => {
               <div ref={chatEndRef} />
             </div>
 
-            <div className="border-t border-slate-100 bg-white p-4">
-              <div className="flex flex-col gap-3">
+            <div className="sticky bottom-0 z-10 shrink-0 border-t border-slate-100 bg-white/95 p-3 shadow-[0_-12px_28px_rgba(15,23,42,0.06)] backdrop-blur sm:p-4">
+              <div className="flex flex-col gap-2.5">
                 <div className="min-w-0 flex-1">
                   <textarea
-                    className="min-h-24 w-full resize-none rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-primary focus:bg-white"
+                    className="max-h-36 min-h-16 w-full resize-y rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-primary focus:bg-white"
                     value={message}
                     onChange={(event) => setMessage(event.target.value)}
                     onKeyDown={(event) => {
@@ -528,16 +528,16 @@ const AssistantPage: React.FC = () => {
                     }}
                     placeholder="Digite ou fale um comando. Ex.: envie notificacao para todos os responsaveis do ultimo relatorio."
                   />
-                  <div className="mt-2 flex flex-wrap items-center justify-between gap-2 text-xs text-slate-500">
+                  <div className="mt-1.5 flex flex-wrap items-center justify-between gap-2 text-xs text-slate-500">
                     <span>Ctrl+Enter envia. Acoes de escrita exigem confirmacao.</span>
                     {voiceState === 'unsupported' && <span className="font-bold text-amber-700">Voz indisponivel neste navegador.</span>}
                   </div>
                 </div>
-                <div className="grid grid-cols-2 gap-3 sm:flex sm:items-center sm:justify-between">
+                <div className="grid grid-cols-2 gap-2.5 sm:flex sm:items-center sm:justify-between">
                   <button
                     type="button"
                     onClick={startVoiceInput}
-                    className={`inline-flex items-center justify-center gap-2 rounded-xl px-5 py-3.5 text-sm font-black shadow-sm transition sm:w-44 ${
+                    className={`inline-flex items-center justify-center gap-2 rounded-xl px-5 py-3 text-sm font-black shadow-sm transition sm:w-44 ${
                       voiceState === 'listening'
                         ? 'bg-red-600 text-white hover:bg-red-700'
                         : 'bg-slate-900 text-white hover:bg-slate-800'
@@ -549,7 +549,7 @@ const AssistantPage: React.FC = () => {
                   <button
                     onClick={() => handleSendText(message)}
                     disabled={sending || !message.trim()}
-                    className="inline-flex items-center justify-center gap-2 rounded-xl bg-primary px-5 py-3.5 text-sm font-black text-white shadow-sm hover:bg-blue-600 disabled:opacity-60 sm:w-44"
+                    className="inline-flex items-center justify-center gap-2 rounded-xl bg-primary px-5 py-3 text-sm font-black text-white shadow-sm hover:bg-blue-600 disabled:opacity-60 sm:w-44"
                   >
                     {sending ? <Loader2 size={18} className="animate-spin" /> : <Send size={18} />}
                     Enviar
