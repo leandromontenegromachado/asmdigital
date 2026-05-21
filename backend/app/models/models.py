@@ -188,6 +188,39 @@ class AssistantAction(Base):
     user = relationship("User")
 
 
+class AssistantKnowledgeDocument(Base):
+    __tablename__ = "assistant_knowledge_documents"
+    __table_args__ = (UniqueConstraint("source_key", name="uq_assistant_knowledge_documents_source_key"),)
+
+    id = Column(Integer, primary_key=True, index=True)
+    source_key = Column(String(160), nullable=False, index=True)
+    title = Column(String(240), nullable=False)
+    domain = Column(String(80), nullable=False, index=True)
+    content = Column(Text, nullable=False)
+    metadata_json = Column(JSONB, nullable=False, default=dict)
+    is_active = Column(Boolean, nullable=False, default=True, index=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
+
+    chunks = relationship("AssistantKnowledgeChunk", back_populates="document", cascade="all, delete-orphan")
+
+
+class AssistantKnowledgeChunk(Base):
+    __tablename__ = "assistant_knowledge_chunks"
+
+    id = Column(Integer, primary_key=True, index=True)
+    document_id = Column(Integer, ForeignKey("assistant_knowledge_documents.id"), nullable=False, index=True)
+    chunk_index = Column(Integer, nullable=False)
+    title = Column(String(240), nullable=False)
+    domain = Column(String(80), nullable=False, index=True)
+    content = Column(Text, nullable=False)
+    keywords_json = Column(JSONB, nullable=False, default=list)
+    metadata_json = Column(JSONB, nullable=False, default=dict)
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+    document = relationship("AssistantKnowledgeDocument", back_populates="chunks")
+
+
 class AssistantCommandLog(Base):
     __tablename__ = "assistant_command_logs"
 
@@ -657,6 +690,8 @@ __all__ = [
     "AssistantAction",
     "AssistantCommandLog",
     "AssistantConversation",
+    "AssistantKnowledgeChunk",
+    "AssistantKnowledgeDocument",
     "AssistantMessage",
     "Notification",
     "NotificationRule",

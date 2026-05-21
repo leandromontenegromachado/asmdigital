@@ -24,6 +24,7 @@ class AssistantIntent(StrEnum):
     RESOLVE_PENDING_ITEM = "resolve_pending_item"
     CREATE_ROUTINE = "create_routine"
     CREATE_MEETING = "create_meeting"
+    GET_EVALUATION_360 = "get_evaluation_360"
     UNKNOWN = "unknown"
 
 
@@ -63,9 +64,21 @@ REPORT_LIST_ACTION_ALIASES = {
     "recent_reports",
 }
 
+EVALUATION_STATUS_ACTION_ALIASES = {
+    "consult",
+    "consult_status",
+    "status",
+    "get_status",
+    "get_employee_evaluation",
+    "get_360_evaluation",
+    "consult_evaluation_360",
+    "evaluation_status",
+    "employee_evaluation_status",
+}
 
-def interpret_command(text: str, db: Session | None = None) -> AssistantPlan:
-    ai_plan = _interpret_with_ai(text, db)
+
+def interpret_command(text: str, db: Session | None = None, knowledge_context: str | None = None) -> AssistantPlan:
+    ai_plan = _interpret_with_ai(text, db, knowledge_context=knowledge_context)
     fallback = deterministic_plan(text)
     if ai_plan and ai_plan.confidence >= 0.65 and ai_plan.intent != AssistantIntent.UNKNOWN.value:
         return _normalize_plan(ai_plan)
@@ -154,6 +167,19 @@ def deterministic_plan(text: str) -> AssistantPlan:
             confidence=0.85,
             extracted_params={"status": "open"},
             summary_for_user="Vou listar pendencias abertas.",
+            permission_required="funcionario",
+        )
+
+    if "avaliacao 360" in normalized or ("avaliacao" in normalized and "360" in normalized):
+        employee_name = _evaluation_employee_from_text(text)
+        return AssistantPlan(
+            intent=AssistantIntent.GET_EVALUATION_360.value,
+            domain="evaluation",
+            action="status",
+            confidence=0.88,
+            extracted_params={"employee_name": employee_name, "text": text},
+            missing_params=[] if employee_name else ["employee_name"],
+            summary_for_user="Vou consultar a avaliacao 360 do funcionario informado.",
             permission_required="funcionario",
         )
 
@@ -257,7 +283,7 @@ def deterministic_plan(text: str) -> AssistantPlan:
     return AssistantPlan(confidence=0.2)
 
 
-def _interpret_with_ai(text: str, db: Session | None) -> AssistantPlan | None:
+def _interpret_with_ai(text: str, db: Session | None, knowledge_context: str | None = None) -> AssistantPlan | None:
     try:
         model = resolve_ai_model(db, "assistant")
         if not isinstance(model.api_key, str) or not model.api_key.strip():
@@ -270,9 +296,10 @@ def _interpret_with_ai(text: str, db: Session | None) -> AssistantPlan | None:
                 "extracted_params, missing_params, summary_for_user, risk_level, permission_required. "
                 "Dominios validos: reports_ai, reports_redmine, routines, notifications, employees, "
                 "management_events, pending_items, evaluation, chefia, connectors, meetings, general. "
-                "Marque requires_confirmation=true para qualquer acao que altere dados ou dispare efeitos externos."
+                "Marque requires_confirmation=true para qualquer acao que altere dados ou dispare efeitos externos. "
+                "Use a base de conhecimento fornecida para escolher melhor dominio e acao, mas nunca invente execucao fora dos dominios validos."
             ),
-            prompt=json.dumps({"text": text}, ensure_ascii=False),
+            prompt=json.dumps({"text": text, "knowledge_context": knowledge_context or ""}, ensure_ascii=False),
             json_response=True,
             max_tokens=900,
         )
@@ -295,6 +322,8 @@ def _normalize_plan(plan: AssistantPlan) -> AssistantPlan:
             action = "run_report"
         elif action in REPORT_LIST_ACTION_ALIASES:
             action = "list"
+    elif domain == "evaluation" and action in EVALUATION_STATUS_ACTION_ALIASES:
+        action = "status"
 
     if original_action != action:
         params.setdefault("requested_action", original_action)
@@ -319,6 +348,25 @@ def _normalize(value: str) -> str:
 def _first_int(text: str) -> int | None:
     match = re.search(r"\b(\d+)\b", text)
     return int(match.group(1)) if match else None
+
+
+def _evaluation_employee_from_text(text: str) -> str | None:
+    patterns = [
+        r"(?:avaliacao|avalia[cç][aã]o)\s*360\s+(?:do|da|de)\s+(.+)$",
+        r"\b360\s+(?:do|da|de)\s+(.+)$",
+        r"\b(?:do|da|de)\s+(.+)$",
+    ]
+    for pattern in patterns:
+        match = re.search(pattern, text, flags=re.IGNORECASE)
+        if match:
+            value = re.split(
+                r"\s+(?:no|na|em)\s+(?:ciclo|periodo|per[ií]odo)\b",
+                match.group(1).strip(" .?"),
+                maxsplit=1,
+                flags=re.IGNORECASE,
+            )[0]
+            return value[:160].strip(" .?") or None
+    return None
 
 
 def _comment_from_text(text: str) -> str | None:

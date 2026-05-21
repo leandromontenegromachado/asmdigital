@@ -33,6 +33,16 @@ def test_redmine_open_demands_command_runs_report_with_confirmation():
     assert plan.extracted_params["status"] == "open"
 
 
+def test_evaluation_360_command_queries_employee_status():
+    plan = deterministic_plan("Como esta avaliacao 360 do leandro montenegro machado")
+
+    assert plan.intent == "get_evaluation_360"
+    assert plan.domain == "evaluation"
+    assert plan.action == "status"
+    assert plan.requires_confirmation is False
+    assert plan.extracted_params["employee_name"] == "leandro montenegro machado"
+
+
 def test_ai_report_action_alias_is_normalized():
     plan = _normalize_plan(
         AssistantPlan(
@@ -47,6 +57,22 @@ def test_ai_report_action_alias_is_normalized():
     assert plan.action == "run_report"
     assert plan.requires_confirmation is True
     assert plan.extracted_params["requested_action"] == "list_open_demands_by_user"
+
+
+def test_ai_evaluation_action_alias_is_normalized():
+    plan = _normalize_plan(
+        AssistantPlan(
+            intent="get_360_evaluation",
+            domain="evaluation",
+            action="get_employee_evaluation",
+            confidence=0.9,
+            extracted_params={"employee_name": "Leandro Montenegro Machado"},
+        )
+    )
+
+    assert plan.action == "status"
+    assert plan.requires_confirmation is False
+    assert plan.extracted_params["requested_action"] == "get_employee_evaluation"
 
 
 def test_contextual_name_correction_reuses_previous_report_plan():

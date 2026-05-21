@@ -40,6 +40,11 @@ class VoiceCommandRequest(BaseModel):
     source: str = "voice_shortcut"
 
 
+class AssistantKnowledgeSearchRequest(BaseModel):
+    query: str = Field(min_length=1)
+    limit: int = 5
+
+
 class AssistantPlan(BaseModel):
     intent: str = "unknown"
     domain: str = "general"

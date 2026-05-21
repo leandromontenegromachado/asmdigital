@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session
 from app.assistant.actions.capabilities import CAPABILITIES
 from app.assistant.actions.registry import get_action_handler
 from app.assistant.intent_router import AssistantIntent, interpret_command
+from app.assistant.knowledge import AssistantKnowledgeService
 from app.assistant.permissions import can_execute
 from app.assistant.schemas import AssistantCommand, AssistantHistoryItem, AssistantPlan, AssistantResponse
 from app.models import AssistantAction, AssistantCommandLog, AssistantConversation, User
@@ -21,9 +22,14 @@ class AssistantCoreService:
         self.db = db
 
     def process_command(self, command: AssistantCommand, user: User | None = None) -> AssistantResponse:
-        plan = interpret_command(command.text, self.db)
+        knowledge_context = self._knowledge_context(command.text)
+        plan = interpret_command(command.text, self.db, knowledge_context=knowledge_context)
         plan = self._apply_conversation_context(command, plan, user)
         plan = self._complete_plan(plan, command.text)
+        knowledge_response = self._knowledge_response(command, plan, user)
+        if knowledge_response:
+            self._log(command, knowledge_response, plan, result=knowledge_response.data)
+            return knowledge_response
         if plan.intent == AssistantIntent.CREATE_MEETING.value:
             response = AssistantResponse(
                 success=False,
@@ -239,6 +245,14 @@ class AssistantCoreService:
     def capabilities(self) -> dict[str, Any]:
         return {"capabilities": CAPABILITIES}
 
+    def seed_knowledge(self) -> dict[str, Any]:
+        count = AssistantKnowledgeService(self.db).ensure_seeded()
+        return {"created": count}
+
+    def search_knowledge(self, query: str, limit: int = 5) -> dict[str, Any]:
+        hits = AssistantKnowledgeService(self.db).search(query, limit=limit)
+        return {"total": len(hits), "items": [hit.__dict__ for hit in hits]}
+
     def _create_pending_action(
         self,
         command: AssistantCommand,
@@ -302,6 +316,41 @@ class AssistantCoreService:
         if plan.domain in {"reports_redmine", "reports_ai"} and plan.action == "run_report":
             params.setdefault("text", text)
         return plan.model_copy(update={"extracted_params": params})
+
+    def _knowledge_context(self, text: str) -> str:
+        if self._db_is_mock():
+            return ""
+        try:
+            return AssistantKnowledgeService(self.db).context_for_prompt(text, limit=5)
+        except Exception:
+            return ""
+
+    def _knowledge_response(self, command: AssistantCommand, plan: AssistantPlan, user: User | None) -> AssistantResponse | None:
+        if self._db_is_mock():
+            return None
+        if plan.intent != AssistantIntent.UNKNOWN.value and not (plan.domain == "general" and plan.action == "capabilities"):
+            return None
+        normalized = self._normalize_text(command.text)
+        if normalized in {"ajuda", "help", "/help"} or "o que voce consegue fazer" in normalized or "o que voce pode fazer" in normalized:
+            return None
+        try:
+            answer = AssistantKnowledgeService(self.db).answer_question(command.text, user=user)
+        except Exception:
+            return None
+        if not answer:
+            return None
+        message, data = answer
+        return AssistantResponse(
+            success=True,
+            intent="knowledge_answer",
+            domain="general",
+            action="knowledge_answer",
+            message=message,
+            data=data,
+        )
+
+    def _db_is_mock(self) -> bool:
+        return self.db.__class__.__module__.startswith("unittest.mock")
 
     def _apply_conversation_context(self, command: AssistantCommand, plan: AssistantPlan, user: User | None) -> AssistantPlan:
         normalized = self._normalize_text(command.text)

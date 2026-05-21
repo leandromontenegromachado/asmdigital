@@ -5,7 +5,14 @@ from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_user, require_admin
 from app.assistant.channels.voice_shortcut_adapter import build_voice_shortcut_command
-from app.assistant.schemas import AssistantCommand, AssistantConfirmationRequest, AssistantHistoryItem, AssistantResponse, VoiceCommandRequest
+from app.assistant.schemas import (
+    AssistantCommand,
+    AssistantConfirmationRequest,
+    AssistantHistoryItem,
+    AssistantKnowledgeSearchRequest,
+    AssistantResponse,
+    VoiceCommandRequest,
+)
 from app.assistant.service import AssistantCoreService
 from app.core.config import settings
 from app.db.session import get_db
@@ -162,6 +169,23 @@ def list_assistant_capabilities(
     _user: User = Depends(get_current_user),
 ):
     return AssistantCoreService(db).capabilities()
+
+
+@router.post("/knowledge/seed")
+def seed_assistant_knowledge(
+    db: Session = Depends(get_db),
+    _admin: User = Depends(require_admin),
+):
+    return AssistantCoreService(db).seed_knowledge()
+
+
+@router.post("/knowledge/search")
+def search_assistant_knowledge(
+    payload: AssistantKnowledgeSearchRequest,
+    db: Session = Depends(get_db),
+    _user: User = Depends(get_current_user),
+):
+    return AssistantCoreService(db).search_knowledge(payload.query, limit=payload.limit)
 
 
 @router.post("/telegram/bind-current")
