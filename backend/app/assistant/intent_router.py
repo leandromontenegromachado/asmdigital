@@ -43,6 +43,26 @@ CONFIRMATION_ACTIONS = {
     ("ai_models", "update"),
 }
 
+REPORT_RUN_ACTION_ALIASES = {
+    "execute_report",
+    "create_demands_report",
+    "generate_demands_report",
+    "generate_report",
+    "run_redmine_report",
+    "run_ai_report",
+    "list_open_demands",
+    "list_open_demands_by_user",
+    "list_demands_by_user",
+    "list_redmine_demands",
+    "query_redmine_demands",
+}
+
+REPORT_LIST_ACTION_ALIASES = {
+    "list_reports",
+    "list_recent_reports",
+    "recent_reports",
+}
+
 
 def interpret_command(text: str, db: Session | None = None) -> AssistantPlan:
     ai_plan = _interpret_with_ai(text, db)
@@ -169,8 +189,30 @@ def deterministic_plan(text: str) -> AssistantPlan:
             action="send",
             requires_confirmation=True,
             confidence=0.84,
-            extracted_params={"target": "responsaveis" if "respons" in normalized else None, "source": "last_report" if "ultimo relatorio" in normalized else None},
+            extracted_params={
+                "target": "responsaveis" if "respons" in normalized else None,
+                "source": "last_report" if "ultimo relatorio" in normalized or "ultimo relatório" in normalized else None,
+                "channel": "email" if "email" in normalized or "e-mail" in normalized else None,
+            },
             summary_for_user="Vou preparar o envio de notificacao para confirmacao.",
+            risk_level="medium",
+            permission_required="manager",
+        )
+
+    if "redmine" in normalized and any(word in normalized for word in ("demanda", "demandas", "chamado", "chamados")):
+        return AssistantPlan(
+            intent=AssistantIntent.RUN_REPORT.value,
+            domain="reports_redmine",
+            action="run_report",
+            requires_confirmation=True,
+            confidence=0.82,
+            extracted_params={
+                "text": text,
+                "owner": _owner_from_report_text(text),
+                "status": "open" if any(word in normalized for word in ("aberto", "abertos", "aberta", "abertas")) else None,
+                "template_id": _template_id_from_text(text),
+            },
+            summary_for_user="Vou preparar a consulta ao Redmine para confirmacao.",
             risk_level="medium",
             permission_required="manager",
         )
@@ -183,7 +225,7 @@ def deterministic_plan(text: str) -> AssistantPlan:
                 action="run_report",
                 requires_confirmation=True,
                 confidence=0.8,
-                extracted_params={"text": text, "owner": _owner_from_report_text(text)},
+                extracted_params={"text": text, "owner": _owner_from_report_text(text), "template_id": _template_id_from_text(text)},
                 summary_for_user="Vou preparar a execucao do relatorio para confirmacao.",
                 risk_level="medium",
                 permission_required="manager",
@@ -245,8 +287,27 @@ def _interpret_with_ai(text: str, db: Session | None) -> AssistantPlan | None:
 def _normalize_plan(plan: AssistantPlan) -> AssistantPlan:
     domain = (plan.domain or "general").strip().lower()
     action = (plan.action or "unknown").strip().lower()
+    params = dict(plan.extracted_params or {})
+    original_action = action
+
+    if domain in {"reports_redmine", "reports_ai"}:
+        if action in REPORT_RUN_ACTION_ALIASES:
+            action = "run_report"
+        elif action in REPORT_LIST_ACTION_ALIASES:
+            action = "list"
+
+    if original_action != action:
+        params.setdefault("requested_action", original_action)
+
     requires_confirmation = bool(plan.requires_confirmation or (domain, action) in CONFIRMATION_ACTIONS)
-    return plan.model_copy(update={"domain": domain, "action": action, "requires_confirmation": requires_confirmation})
+    return plan.model_copy(
+        update={
+            "domain": domain,
+            "action": action,
+            "extracted_params": params,
+            "requires_confirmation": requires_confirmation,
+        }
+    )
 
 
 def _normalize(value: str) -> str:
@@ -305,5 +366,25 @@ def _routine_name_from_text(text: str) -> str:
 
 
 def _owner_from_report_text(text: str) -> str | None:
-    match = re.search(r"\bdo\s+([A-ZÁÉÍÓÚÂÊÔÃÕÇ][\wÁÉÍÓÚÂÊÔÃÕÇáéíóúâêôãõç]+)", text)
-    return match.group(1) if match else None
+    patterns = [
+        r"\bem aberto\s+(?:do|da|de)\s+(.+)$",
+        r"\babertas?\s+(?:do|da|de)\s+(.+)$",
+        r"\babertos?\s+(?:do|da|de)\s+(.+)$",
+        r"\b(?:respons[aá]vel|atribu[ií]do para|usuario|usu[aá]rio)\s+(.+)$",
+    ]
+    for pattern in patterns:
+        match = re.search(pattern, text, flags=re.IGNORECASE)
+        if match:
+            owner = re.split(
+                r"\s+(?:no|na|do|da)\s+(?:redmine|relat[oó]rio)\b",
+                match.group(1).strip(" ."),
+                maxsplit=1,
+                flags=re.IGNORECASE,
+            )[0]
+            return owner[:120].strip(" .") or None
+    return None
+
+
+def _template_id_from_text(text: str) -> int | None:
+    match = re.search(r"(?:template|modelo|relatorio|relat[oó]rio)\s*#?\s*(\d+)", text, flags=re.IGNORECASE)
+    return int(match.group(1)) if match else None

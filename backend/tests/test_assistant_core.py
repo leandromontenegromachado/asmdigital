@@ -2,7 +2,7 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 from app.assistant.actions.base import ActionResult
-from app.assistant.intent_router import AssistantIntent, detect_intent, deterministic_plan
+from app.assistant.intent_router import AssistantIntent, _normalize_plan, detect_intent, deterministic_plan
 from app.assistant.schemas import AssistantCommand, AssistantPlan
 from app.assistant.service import AssistantCoreService
 
@@ -20,6 +20,104 @@ def test_interpret_create_routine_requires_confirmation():
     assert plan.action == "create"
     assert plan.requires_confirmation is True
     assert plan.extracted_params["schedule_cron"] == "0 9 * * fri"
+
+
+def test_redmine_open_demands_command_runs_report_with_confirmation():
+    plan = deterministic_plan("consegue me listar as demandas do redmine que estao em aberto do leandro machado")
+
+    assert plan.intent == "run_report"
+    assert plan.domain == "reports_redmine"
+    assert plan.action == "run_report"
+    assert plan.requires_confirmation is True
+    assert plan.extracted_params["owner"] == "leandro machado"
+    assert plan.extracted_params["status"] == "open"
+
+
+def test_ai_report_action_alias_is_normalized():
+    plan = _normalize_plan(
+        AssistantPlan(
+            intent="list_open_demands_by_user",
+            domain="reports_redmine",
+            action="list_open_demands_by_user",
+            confidence=0.9,
+            extracted_params={"owner": "Leandro Machado"},
+        )
+    )
+
+    assert plan.action == "run_report"
+    assert plan.requires_confirmation is True
+    assert plan.extracted_params["requested_action"] == "list_open_demands_by_user"
+
+
+def test_contextual_name_correction_reuses_previous_report_plan():
+    service = AssistantCoreService(MagicMock())
+    previous = AssistantPlan(
+        intent="run_report",
+        domain="reports_redmine",
+        action="run_report",
+        requires_confirmation=True,
+        extracted_params={
+            "text": "consegue me listar as demandas do redmine que estao em aberto do leandro machado",
+            "owner": "leandro machado",
+            "status": "open",
+            "template_id": 1,
+        },
+        permission_required="manager",
+    )
+    current = AssistantPlan(confidence=0.2)
+
+    with patch.object(service, "_last_contextual_plan", return_value=(previous, 123)):
+        plan = service._apply_conversation_context(
+            AssistantCommand(text="Coloquei errado o nome e leandro montenegro machado", user_id="1", channel="web"),
+            current,
+            user=MagicMock(id=1, role="gerente"),
+        )
+
+    assert plan.domain == "reports_redmine"
+    assert plan.action == "run_report"
+    assert plan.requires_confirmation is True
+    assert plan.extracted_params["owner"] == "leandro montenegro machado"
+    assert plan.extracted_params["template_id"] == 1
+    assert "leandro montenegro machado" in plan.extracted_params["text"]
+    assert plan.extracted_params["context"]["source"] == "correction"
+
+
+def test_contextual_source_follow_up_keeps_previous_report_params():
+    service = AssistantCoreService(MagicMock())
+    previous = AssistantPlan(
+        intent="run_report",
+        domain="reports_ai",
+        action="run_report",
+        requires_confirmation=True,
+        extracted_params={
+            "text": "consegue gerar uma lista com as demandas do Leandro Montenegro Machado",
+            "owner": "Leandro Montenegro Machado",
+            "template_id": 1,
+        },
+        permission_required="manager",
+    )
+    current = AssistantPlan(
+        intent="run_report",
+        domain="reports_redmine",
+        action="run_report",
+        requires_confirmation=True,
+        extracted_params={"text": "pode ser com as demandas do Redmine", "owner": None, "status": None},
+        permission_required="manager",
+    )
+
+    with patch.object(service, "_last_contextual_plan", return_value=(previous, 124)):
+        plan = service._apply_conversation_context(
+            AssistantCommand(text="pode ser com as demandas do Redmine", user_id="1", channel="web"),
+            current,
+            user=MagicMock(id=1, role="gerente"),
+        )
+
+    assert plan.domain == "reports_redmine"
+    assert plan.action == "run_report"
+    assert plan.extracted_params["owner"] == "Leandro Montenegro Machado"
+    assert "Leandro Montenegro Machado" in plan.extracted_params["text"]
+    assert "Redmine" in plan.extracted_params["text"]
+    assert plan.extracted_params["context"]["source"] == "follow_up"
 
 
 def test_process_read_only_action_executes_without_confirmation():
