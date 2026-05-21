@@ -185,6 +185,17 @@ const inferRules = (brief: string) => {
   return rules;
 };
 
+const inferStatusFromBrief = (brief: string) => {
+  const lowered = brief.toLowerCase();
+  if (lowered.includes('em execução') || lowered.includes('em execucao') || lowered.includes('em andamento') || lowered.includes('aberto')) {
+    return 'open';
+  }
+  if (lowered.includes('fechado') || lowered.includes('encerrado')) {
+    return 'closed';
+  }
+  return '';
+};
+
 const buildPromptMarkdown = (form: FormState, brief: string) => {
   const objective = brief.trim() || 'Gerar relatorio operacional com dados do Redmine para suporte a decisao.';
   const projects = form.project_ids
@@ -200,10 +211,11 @@ const buildPromptMarkdown = (form: FormState, brief: string) => {
     periodLine = `a partir de ${form.start_date}`;
   }
 
+  const effectiveStatus = form.status_id || inferStatusFromBrief(objective);
   const statusText =
-    form.status_id === 'open'
+    effectiveStatus === 'open'
       ? 'abertos'
-      : form.status_id === 'closed'
+      : effectiveStatus === 'closed'
       ? 'fechados'
       : 'todos os status';
 

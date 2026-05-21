@@ -5,11 +5,11 @@ from typing import Any
 
 from sqlalchemy.orm import Session
 
-from app.assistant.actions.list_late_projects import format_late_projects_message, list_late_projects
-from app.assistant.actions.notify_responsibles import build_notify_responsibles_confirmation
-from app.assistant.intent_router import AssistantIntent, detect_intent
+from app.assistant.actions.capabilities import CAPABILITIES
+from app.assistant.actions.registry import get_action_handler
+from app.assistant.intent_router import AssistantIntent, interpret_command
 from app.assistant.permissions import can_execute
-from app.assistant.schemas import AssistantCommand, AssistantResponse
+from app.assistant.schemas import AssistantCommand, AssistantHistoryItem, AssistantPlan, AssistantResponse
 from app.models import AssistantAction, AssistantCommandLog, AssistantConversation, User
 
 
@@ -18,44 +18,92 @@ class AssistantCoreService:
         self.db = db
 
     def process_command(self, command: AssistantCommand, user: User | None = None) -> AssistantResponse:
-        intent = detect_intent(command.text)
-        if intent == AssistantIntent.CREATE_MEETING:
+        plan = interpret_command(command.text, self.db)
+        if plan.intent == AssistantIntent.CREATE_MEETING.value:
             response = AssistantResponse(
                 success=False,
-                intent=intent.value,
+                intent=plan.intent,
+                domain=plan.domain,
                 action="legacy_assistant_service",
                 message="LEGACY_ASSISTANT_FALLBACK",
+                preview=self._preview_from_plan(plan),
             )
-            self._log(command, response, intent.value, "legacy_assistant_service")
+            self._log(command, response, plan)
             return response
 
-        if not can_execute(user, intent.value):
+        if not can_execute(user, plan.domain, plan.action):
             response = AssistantResponse(
                 success=False,
-                intent=intent.value,
-                action=intent.value,
+                intent=plan.intent,
+                domain=plan.domain,
+                action=plan.action,
                 message="Voce nao tem permissao para executar esta acao.",
+                preview=self._preview_from_plan(plan),
+                missing_params=plan.missing_params,
                 errors=["permission_denied"],
             )
-            self._log(command, response, intent.value, intent.value)
+            self._log(command, response, plan)
             return response
 
-        if intent == AssistantIntent.HELP:
-            response = self._help_response()
-        elif intent == AssistantIntent.LIST_LATE_PROJECTS:
-            response = self._list_late_projects_response()
-        elif intent == AssistantIntent.NOTIFY_RESPONSIBLES:
-            response = self._notify_responsibles_response(command, user)
-        else:
+        handler = get_action_handler(plan.domain)
+        if not handler:
             response = AssistantResponse(
                 success=False,
-                intent=AssistantIntent.UNKNOWN.value,
-                action=None,
-                message="Nao entendi o pedido. Tente: listar projetos em atraso ou notificar responsaveis dos projetos atrasados.",
-                errors=["unknown_intent"],
+                intent=plan.intent,
+                domain=plan.domain,
+                action=plan.action,
+                message="Ainda nao tenho executor para essa funcionalidade.",
+                preview=self._preview_from_plan(plan),
+                missing_params=plan.missing_params,
+                errors=["unsupported_domain"],
             )
+            self._log(command, response, plan)
+            return response
 
-        self._log(command, response, response.intent, response.action)
+        preview = handler.preview(self.db, plan, user)
+        if plan.missing_params:
+            response = AssistantResponse(
+                success=True,
+                intent=plan.intent,
+                domain=plan.domain,
+                action=plan.action,
+                message=f"{plan.summary_for_user} Ainda faltam dados: {', '.join(plan.missing_params)}.",
+                requires_confirmation=plan.requires_confirmation,
+                preview=preview,
+                missing_params=plan.missing_params,
+            )
+            self._log(command, response, plan)
+            return response
+
+        if plan.requires_confirmation:
+            action = self._create_pending_action(command, user, plan, preview)
+            response = AssistantResponse(
+                success=True,
+                intent=plan.intent,
+                domain=plan.domain,
+                action=plan.action,
+                message=plan.summary_for_user,
+                requires_confirmation=True,
+                confirmation_id=f"assistant_action:{action.id}",
+                preview=preview,
+                missing_params=plan.missing_params,
+                data={"action_id": action.id, "status": action.status},
+            )
+            self._log(command, response, plan)
+            return response
+
+        result = handler.execute(self.db, plan, user)
+        response = AssistantResponse(
+            success=result.success,
+            intent=plan.intent,
+            domain=plan.domain,
+            action=plan.action,
+            message=result.message,
+            preview=preview,
+            data=result.data,
+            errors=result.errors or [],
+        )
+        self._log(command, response, plan, result=result.data)
         return response
 
     def confirm(self, confirmation_id: str, confirmed: bool, user: User | None = None, channel: str = "web") -> AssistantResponse:
@@ -74,82 +122,108 @@ class AssistantCoreService:
                 message="Voce nao tem permissao para confirmar esta acao.",
                 errors=["permission_denied"],
             )
+        payload = action.payload_json or {}
+        plan = AssistantPlan(**(payload.get("plan") or {}))
+        if not can_execute(user, plan.domain, plan.action):
+            return AssistantResponse(
+                success=False,
+                intent=plan.intent,
+                domain=plan.domain,
+                action=plan.action,
+                message="Voce nao tem permissao para executar esta acao.",
+                errors=["permission_denied"],
+            )
+
         if not confirmed:
             action.status = "cancelled"
             action.result_json = {"status": "cancelled", "channel": channel}
             self.db.commit()
-            return AssistantResponse(success=True, action=action.action_type, message="Acao cancelada.", data=action.result_json)
-
-        if action.action_type == AssistantIntent.NOTIFY_RESPONSIBLES.value:
-            payload = action.payload_json or {}
-            result = {
-                "status": "simulated",
-                "recipients": payload.get("recipients") or [],
-                "notified_at": datetime.now(timezone.utc).isoformat(),
-                "channel": channel,
-            }
-            action.status = "completed"
-            action.result_json = result
-            action.confirmed_at = datetime.now(timezone.utc)
-            self.db.commit()
             return AssistantResponse(
                 success=True,
-                action=action.action_type,
-                message=f"Notificacao simulada para {len(result['recipients'])} responsaveis.",
-                data=result,
+                intent=plan.intent,
+                domain=plan.domain,
+                action=plan.action,
+                message="Acao cancelada.",
+                data=action.result_json,
             )
 
+        handler = get_action_handler(plan.domain)
+        if not handler:
+            return AssistantResponse(
+                success=False,
+                intent=plan.intent,
+                domain=plan.domain,
+                action=plan.action,
+                message="Esta confirmacao ainda nao possui executor configurado.",
+                errors=["unsupported_confirmation_action"],
+            )
+
+        result = handler.execute(self.db, plan, user)
+        action.status = "completed" if result.success else "error"
+        action.result_json = {"status": action.status, "channel": channel, **result.data, "errors": result.errors or []}
+        action.confirmed_at = datetime.now(timezone.utc)
+        self.db.commit()
         return AssistantResponse(
-            success=False,
-            action=action.action_type,
-            message="Esta confirmacao ainda nao possui executor configurado.",
-            errors=["unsupported_confirmation_action"],
+            success=result.success,
+            intent=plan.intent,
+            domain=plan.domain,
+            action=plan.action,
+            message=result.message,
+            preview=payload.get("preview") or {},
+            data=action.result_json,
+            errors=result.errors or [],
         )
 
-    def _help_response(self) -> AssistantResponse:
-        return AssistantResponse(
-            success=True,
-            intent=AssistantIntent.HELP.value,
-            action="HELP",
-            message=(
-                "Posso ajudar com: listar projetos em atraso, notificar responsaveis dos projetos atrasados "
-                "e encaminhar pedidos de reuniao para o fluxo de agendamento."
-            ),
-        )
+    def history(self, user: User | None = None, limit: int = 50) -> list[AssistantHistoryItem]:
+        query = self.db.query(AssistantCommandLog)
+        if user and (user.role or "").lower() not in {"admin", "gerente"}:
+            query = query.filter(AssistantCommandLog.user_id == str(user.id))
+        logs = query.order_by(AssistantCommandLog.created_at.desc()).limit(min(max(limit, 1), 200)).all()
+        items = []
+        for log in logs:
+            raw = log.raw_payload_json or {}
+            plan = raw.get("plan") if isinstance(raw.get("plan"), dict) else {}
+            items.append(
+                AssistantHistoryItem(
+                    id=log.id,
+                    user_id=log.user_id,
+                    user_name=log.user_name,
+                    channel=log.channel,
+                    text=log.text,
+                    intent=log.intent,
+                    domain=plan.get("domain"),
+                    action=log.action,
+                    response_message=log.response_message,
+                    success=log.success,
+                    raw_payload_json=raw,
+                    created_at=log.created_at,
+                )
+            )
+        return items
 
-    def _list_late_projects_response(self) -> AssistantResponse:
-        data = list_late_projects()
-        return AssistantResponse(
-            success=True,
-            intent=AssistantIntent.LIST_LATE_PROJECTS.value,
-            action=AssistantIntent.LIST_LATE_PROJECTS.value,
-            message=format_late_projects_message(data),
-            data=data,
-        )
+    def capabilities(self) -> dict[str, Any]:
+        return {"capabilities": CAPABILITIES}
 
-    def _notify_responsibles_response(self, command: AssistantCommand, user: User | None) -> AssistantResponse:
-        payload = build_notify_responsibles_confirmation()
+    def _create_pending_action(
+        self,
+        command: AssistantCommand,
+        user: User | None,
+        plan: AssistantPlan,
+        preview: dict[str, Any],
+    ) -> AssistantAction:
         conversation = self._conversation(command, user)
         action = AssistantAction(
             conversation_id=conversation.id,
             user_id=user.id if user else None,
-            action_type=AssistantIntent.NOTIFY_RESPONSIBLES.value,
+            action_type=f"{plan.domain}.{plan.action}",
             status="needs_confirmation",
-            payload_json=payload,
+            payload_json={"plan": plan.model_dump(), "preview": preview, "original_text": command.text},
             result_json={},
         )
         self.db.add(action)
         self.db.commit()
         self.db.refresh(action)
-        return AssistantResponse(
-            success=True,
-            intent=AssistantIntent.NOTIFY_RESPONSIBLES.value,
-            action=AssistantIntent.NOTIFY_RESPONSIBLES.value,
-            message=f"{payload['message_preview']} Responda confirmando pelo endpoint de confirmacao.",
-            requires_confirmation=True,
-            confirmation_id=f"assistant_action:{action.id}",
-            data=payload,
-        )
+        return action
 
     def _conversation(self, command: AssistantCommand, user: User | None) -> AssistantConversation:
         external_chat_id = str(command.metadata.get("chat_id") or "") or None
@@ -178,18 +252,42 @@ class AssistantCoreService:
             return None
         return self.db.query(AssistantAction).filter(AssistantAction.id == int(raw_id)).first()
 
-    def _log(self, command: AssistantCommand, response: AssistantResponse, intent: str | None, action: str | None) -> None:
+    def _preview_from_plan(self, plan: AssistantPlan) -> dict[str, Any]:
+        return {
+            "summary": plan.summary_for_user,
+            "params": plan.extracted_params,
+            "missing_params": plan.missing_params,
+            "risk_level": plan.risk_level,
+            "permission_required": plan.permission_required,
+            "requires_confirmation": plan.requires_confirmation,
+        }
+
+    def _log(
+        self,
+        command: AssistantCommand,
+        response: AssistantResponse,
+        plan: AssistantPlan,
+        result: dict[str, Any] | None = None,
+    ) -> None:
         self.db.add(
             AssistantCommandLog(
                 user_id=command.user_id,
                 user_name=command.user_name,
                 channel=command.channel,
                 text=command.text,
-                intent=intent,
-                action=action,
+                intent=plan.intent,
+                action=plan.action,
                 response_message=response.message,
                 success=response.success,
-                raw_payload_json={"raw_payload": command.raw_payload, "metadata": command.metadata},
+                raw_payload_json={
+                    "raw_payload": command.raw_payload,
+                    "metadata": command.metadata,
+                    "plan": plan.model_dump(),
+                    "preview": response.preview,
+                    "confirmation_id": response.confirmation_id,
+                    "result": result or response.data,
+                    "errors": response.errors,
+                },
             )
         )
         self.db.commit()

@@ -88,3 +88,32 @@ def test_fallback_parser_understands_empty_due_date_and_old_update(monkeypatch):
         for item in options["prompt_filters"]
     )
     assert options["sort"] == [{"field": "assigned_to", "direction": "asc"}]
+
+
+def test_objective_status_signal_survives_generic_scope_and_ai_null_status(monkeypatch):
+    prompt = """# Objetivo
+Quero um relatorio que liste as demandas em execucao que estao com o campo data prevista vazio.
+
+## Escopo
+- projetos: asm-dem
+- status: todos os status
+- periodo: sem filtro de data
+- query_id: opcional
+"""
+
+    monkeypatch.setattr(
+        "app.services.prompt_report_service._call_prompt_interpreter_ai",
+        lambda *args, **kwargs: (
+            {
+                "project_ids": ["asm-dem"],
+                "status_id": None,
+                "filters": [{"field": "due_date", "operator": "is_empty", "values": []}],
+            },
+            "test-model",
+        ),
+    )
+
+    filters = _parse_prompt_filters(None, prompt, {"project_ids": ["asm-dem"]})
+
+    assert filters["status_id"] == "open"
+    assert {"field": "due_date", "operator": "is_empty", "values": []} in filters["prompt_options"]["prompt_filters"]

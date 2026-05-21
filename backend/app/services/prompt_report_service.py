@@ -195,6 +195,11 @@ def _normalize_prompt_text(value: str) -> str:
     return "".join(char for char in normalized if not unicodedata.combining(char)).lower()
 
 
+def _objective_text(prompt: str) -> str:
+    match = re.search(r"#\s*Objetivo\s*([\s\S]*?)(?:\n##\s|$)", prompt or "", flags=re.IGNORECASE)
+    return (match.group(1) if match else prompt or "").strip()
+
+
 def _split_prompt_list(value: str) -> list[str]:
     value = re.split(
         r"\s+(?:,|;|\be\b)\s+(?:status(?:es)?|prioridade|tipo|tracker|autor|solicitante|responsavel|responsável|atribuido(?:\s+para)?|atribuído(?:\s+para)?|titulo|título|assunto|demanda|cliente|sistema|entrega)\s+(?:diferente|nao|não|exceto|menos)\b",
@@ -690,8 +695,10 @@ def _parse_prompt_filters(
     }
 
     lowered = prompt.lower()
+    objective_lowered = _objective_text(prompt).lower()
     has_default_period = bool(output["start_date"] or output["end_date"])
     has_explicit_period = _has_explicit_period(prompt)
+    deterministic_status_id: str | None = None
 
     query_match = re.search(r"query(?:_id)?\s*[:=]?\s*(\d+)", prompt, flags=re.IGNORECASE)
     if query_match:
@@ -705,16 +712,32 @@ def _parse_prompt_filters(
         if parsed_projects:
             output["project_ids"] = parsed_projects
 
-    if "fechado" in lowered or "fechados" in lowered:
-        output["status_id"] = "closed"
+    if "fechado" in objective_lowered or "fechados" in objective_lowered:
+        deterministic_status_id = "closed"
+    elif (
+        "aberto" in objective_lowered
+        or "abertos" in objective_lowered
+        or "em execu" in objective_lowered
+        or "em andamento" in objective_lowered
+    ):
+        deterministic_status_id = "open"
+    elif "todos os status" in objective_lowered or "qualquer status" in objective_lowered:
+        deterministic_status_id = None
+    elif "fechado" in lowered or "fechados" in lowered:
+        deterministic_status_id = "closed"
     elif "aberto" in lowered or "abertos" in lowered or "em execu" in lowered or "em andamento" in lowered:
+        deterministic_status_id = "open"
+
+    if deterministic_status_id == "closed":
+        output["status_id"] = "closed"
+    elif deterministic_status_id == "open":
         output["status_id"] = "open"
         if not _has_explicit_period(prompt):
             output["prompt_options"] = {
                 **output["prompt_options"],
                 "ignore_date_filter": True,
             }
-    elif "todos os status" in lowered or "qualquer status" in lowered:
+    elif "todos os status" in objective_lowered or "qualquer status" in objective_lowered:
         output["status_id"] = None
 
     last_days_match = re.search(r"ultim[oa]s?\s+(\d+)\s+dias", lowered)
@@ -810,6 +833,8 @@ def _parse_prompt_filters(
             raw_plan, interpreter_model = ai_result
             plan = _normalize_prompt_plan(raw_plan)
             output = _apply_prompt_plan(output, plan)
+            if deterministic_status_id and plan.get("status_id") is None:
+                output["status_id"] = deterministic_status_id
             if deterministic_filters:
                 output["prompt_options"] = _append_prompt_filters(output["prompt_options"], deterministic_filters)
             if assignee_filters:

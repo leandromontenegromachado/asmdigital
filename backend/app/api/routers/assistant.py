@@ -5,7 +5,7 @@ from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_user, require_admin
 from app.assistant.channels.voice_shortcut_adapter import build_voice_shortcut_command
-from app.assistant.schemas import AssistantCommand, AssistantConfirmationRequest, AssistantResponse, VoiceCommandRequest
+from app.assistant.schemas import AssistantCommand, AssistantConfirmationRequest, AssistantHistoryItem, AssistantResponse, VoiceCommandRequest
 from app.assistant.service import AssistantCoreService
 from app.core.config import settings
 from app.db.session import get_db
@@ -54,10 +54,13 @@ def process_assistant_command(
         return AssistantResponse(
             success=True,
             intent="CREATE_MEETING",
+            domain="meetings",
             action=action.action_type if action else "legacy_assistant_service",
             message=reply,
             requires_confirmation=bool(action and action.status in {"needs_confirmation", "needs_input"}),
             confirmation_id=f"legacy_action:{action.id}" if action else None,
+            preview=action.payload_json if action else {},
+            missing_params=(action.payload_json or {}).get("missing_fields", []) if action else [],
             data={"conversation_id": conversation.id, "action_id": action.id if action else None},
         )
     return response
@@ -107,6 +110,7 @@ def process_public_voice_shortcut(
         return AssistantResponse(
             success=False,
             intent="CREATE_MEETING",
+            domain="meetings",
             action="legacy_assistant_service",
             message="Pedidos de reuniao por atalho de voz ainda precisam ser confirmados no canal autenticado.",
             errors=["confirmation_channel_required"],
@@ -134,12 +138,30 @@ def confirm_assistant_core_action(
             action = AssistantService(db).confirm_action(action)
         return AssistantResponse(
             success=action.status in {"completed", "cancelled", "needs_input"},
+            domain="meetings",
             action=action.action_type,
             message="Acao confirmada." if payload.confirmed else "Acao cancelada.",
             data=action.result_json or {},
             errors=[] if action.status != "error" else ["legacy_action_error"],
         )
     return AssistantCoreService(db).confirm(confirmation_id, payload.confirmed, user=user, channel=payload.channel)
+
+
+@router.get("/history", response_model=list[AssistantHistoryItem])
+def list_assistant_history(
+    limit: int = 50,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    return AssistantCoreService(db).history(user=user, limit=limit)
+
+
+@router.get("/capabilities")
+def list_assistant_capabilities(
+    db: Session = Depends(get_db),
+    _user: User = Depends(get_current_user),
+):
+    return AssistantCoreService(db).capabilities()
 
 
 @router.post("/telegram/bind-current")

@@ -44,7 +44,7 @@ def provider_label(provider: str) -> str:
 
 
 def _api_key_from_env(api_key_env: str | None, provider: str) -> str | None:
-    env_name = (api_key_env or "").strip()
+    env_name = api_key_env.strip() if isinstance(api_key_env, str) else ""
     if env_name:
         value = os.getenv(env_name)
         if value:

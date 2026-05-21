@@ -16,6 +16,35 @@ export interface AssistantMessageResponse {
   action?: AssistantAction | null;
 }
 
+export interface AssistantResponse {
+  success: boolean;
+  message: string;
+  intent?: string | null;
+  domain?: string | null;
+  action?: string | null;
+  requires_confirmation: boolean;
+  confirmation_id?: string | null;
+  preview: Record<string, any>;
+  missing_params: string[];
+  data: Record<string, any>;
+  errors: string[];
+}
+
+export interface AssistantHistoryItem {
+  id: number;
+  user_id?: string | null;
+  user_name?: string | null;
+  channel: string;
+  text: string;
+  intent?: string | null;
+  domain?: string | null;
+  action?: string | null;
+  response_message?: string | null;
+  success: boolean;
+  raw_payload_json: Record<string, any>;
+  created_at: string;
+}
+
 export interface AssistantActionResult {
   id: number;
   status: string;
@@ -24,6 +53,29 @@ export interface AssistantActionResult {
 
 export const sendAssistantMessage = async (text: string, channel = 'internal') => {
   const { data } = await api.post<AssistantMessageResponse>('/assistant/messages', { text, channel });
+  return data;
+};
+
+export const sendAssistantCommand = async (text: string, channel = 'web') => {
+  const { data } = await api.post<AssistantResponse>('/assistant/commands', { text, channel });
+  return data;
+};
+
+export const confirmAssistantConfirmation = async (confirmationId: string, confirmed: boolean, channel = 'web') => {
+  const { data } = await api.post<AssistantResponse>(`/assistant/confirmations/${encodeURIComponent(confirmationId)}`, {
+    confirmed,
+    channel,
+  });
+  return data;
+};
+
+export const listAssistantHistory = async () => {
+  const { data } = await api.get<AssistantHistoryItem[]>('/assistant/history');
+  return data;
+};
+
+export const listAssistantCapabilities = async () => {
+  const { data } = await api.get<{ capabilities: any[] }>('/assistant/capabilities');
   return data;
 };
 
