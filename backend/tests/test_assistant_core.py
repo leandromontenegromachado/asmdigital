@@ -451,6 +451,30 @@ def test_prompt_report_complex_prompt_uses_ai_plan():
     assert {"field": "status", "operator": "in", "values": ["Homologação"]} in filters["prompt_options"]["prompt_filters"]
 
 
+def test_prompt_report_drops_spurious_subject_filter_from_ai_plan():
+    prompt = (
+        "Quero um relatório que liste as demandas em execução que estão em atraso. "
+        "Não trazer as demanda que estão com status homologada ou homologação."
+    )
+    ai_plan = {
+        "project_ids": ["asm-dem"],
+        "status_id": "open",
+        "filters": [
+            {"field": "due_date", "operator": "lt", "values": ["2026-05-22"]},
+            {"field": "status", "operator": "not_in", "values": ["homologada", "homologacao"]},
+            {"field": "subject", "operator": "in", "values": ["que estao"]},
+        ],
+        "overdue_only": True,
+    }
+
+    with patch("app.services.prompt_report_service._call_prompt_interpreter_ai", return_value=(ai_plan, "test-model")):
+        filters = _parse_prompt_filters(MagicMock(), prompt, {"project_ids": ["asm-dem"], "status_id": "open"})
+
+    prompt_filters = filters["prompt_options"]["prompt_filters"]
+    assert {"field": "status", "operator": "not_in", "values": ["homologada", "homologacao"]} in prompt_filters
+    assert not any(item.get("field") == "subject" and item.get("values") == ["que estao"] for item in prompt_filters)
+
+
 def test_prompt_report_projects_are_limited_to_connector_scope():
     connector = SimpleNamespace(config_json={"project_ids": ["asm-dem"]})
 

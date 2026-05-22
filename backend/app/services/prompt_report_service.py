@@ -334,7 +334,7 @@ def _parse_included_field_values(prompt: str) -> list[dict[str, Any]]:
     normalized = _normalize_prompt_text(prompt)
     field_pattern = (
         r"status(?:es)?|situacao|prioridade|tipo|tracker|autor|solicitante|responsavel|"
-        r"atribuido(?:\s+para)?|titulo|assunto|demanda|cliente|sistema|entrega"
+        r"atribuido(?:\s+para)?|cliente|sistema|entrega"
     )
     next_rule = (
         rf"(?=\s+(?:,|;|\be\b)\s+(?:{field_pattern})\s+"
@@ -683,6 +683,30 @@ def _call_prompt_interpreter_ai(
     return json.loads(_extract_json_object(text)), model.model_id
 
 
+def _is_suspicious_prompt_filter(field: str | None, operator: str, values: list[Any]) -> bool:
+    normalized_values = [_normalize_prompt_text(str(value)) for value in values if str(value).strip()]
+    if not normalized_values:
+        return False
+    if field == "subject":
+        grammar_fragments = {
+            "que",
+            "que estao",
+            "que estejam",
+            "que esta",
+            "estao",
+            "estejam",
+            "em execucao",
+            "em atraso",
+            "data prevista",
+            "menor que",
+        }
+        if any(value in grammar_fragments for value in normalized_values):
+            return True
+        if operator in {"eq", "in"} and all(len(value.split()) <= 2 for value in normalized_values):
+            return True
+    return False
+
+
 def _normalize_prompt_plan(raw_plan: dict[str, Any]) -> dict[str, Any]:
     plan: dict[str, Any] = {}
     if isinstance(raw_plan.get("project_ids"), list):
@@ -720,6 +744,9 @@ def _normalize_prompt_plan(raw_plan: dict[str, Any]) -> dict[str, Any]:
                 rule["values"] = [value for value in item["values"] if value not in (None, "")]
             elif item.get("value") not in (None, ""):
                 rule["value"] = item.get("value")
+            values = rule.get("values") if isinstance(rule.get("values"), list) else [rule.get("value")]
+            if _is_suspicious_prompt_filter(field, operator, [value for value in values if value not in (None, "")]):
+                continue
             filters.append(rule)
     if filters:
         plan["filters"] = filters
