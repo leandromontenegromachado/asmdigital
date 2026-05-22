@@ -1,10 +1,12 @@
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
+import pytest
 
 from app.assistant.actions.base import ActionResult
 from app.assistant.intent_router import AssistantIntent, _normalize_plan, detect_intent, deterministic_plan
 from app.assistant.schemas import AssistantCommand, AssistantPlan
 from app.assistant.service import AssistantCoreService
+from app.services.prompt_report_service import PromptInterpretationError, _connector_scoped_project_ids, _parse_prompt_filters
 
 
 def test_detect_list_late_projects_intent():
@@ -412,3 +414,46 @@ def test_permission_denied_for_employee_create():
 
     assert response.success is False
     assert "permission_denied" in response.errors
+
+
+def test_prompt_report_complex_prompt_requires_ai_or_cached_plan():
+    prompt = (
+        "Quero um relatório que liste as demandas em execução que estão com o campo data prevista vazia, "
+        "ou seja, sem uma data prevista definida, com data de atualização a mais de 7 dias. "
+        "Este relatório deve ter os campos título da demanda, situação, atribuído para, data prevista e alterado em. "
+        "Ordene pelo responsável, ou seja, campo atribuído para. Quero somente as que estão em execução "
+        "e não trazer as demanda que estão com status homologada ou homologação."
+    )
+
+    with patch("app.services.prompt_report_service._call_prompt_interpreter_ai", return_value=None):
+        with pytest.raises(PromptInterpretationError) as exc_info:
+            _parse_prompt_filters(MagicMock(), prompt, {"project_ids": ["asm-dem"], "status_id": None})
+    assert exc_info.value.details["identified"]["project_ids"] == ["asm-dem"]
+    assert exc_info.value.details["possible_issues"]
+    assert exc_info.value.details["suggestions"]
+
+
+def test_prompt_report_complex_prompt_uses_ai_plan():
+    prompt = "Quero um relatório com status Homologação."
+    ai_plan = {
+        "project_ids": ["asm-dem"],
+        "status_id": "open",
+        "filters": [{"field": "status", "operator": "in", "values": ["Homologação"]}],
+        "columns": [{"key": "subject"}, {"key": "status"}],
+        "sort": [{"field": "status", "direction": "asc"}],
+    }
+
+    with patch("app.services.prompt_report_service._call_prompt_interpreter_ai", return_value=(ai_plan, "test-model")):
+        filters = _parse_prompt_filters(MagicMock(), prompt, {"project_ids": ["asm-dem"], "status_id": "open"})
+
+    assert filters["prompt_options"]["interpreter"] == "gemini"
+    assert filters["prompt_options"]["interpreter_model"] == "test-model"
+    assert {"field": "status", "operator": "in", "values": ["Homologação"]} in filters["prompt_options"]["prompt_filters"]
+
+
+def test_prompt_report_projects_are_limited_to_connector_scope():
+    connector = SimpleNamespace(config_json={"project_ids": ["asm-dem"]})
+
+    assert _connector_scoped_project_ids(connector, []) == ["asm-dem"]
+    assert _connector_scoped_project_ids(connector, ["asm-dem", "outro-projeto"]) == ["asm-dem"]
+    assert _connector_scoped_project_ids(connector, ["outro-projeto"]) == ["asm-dem"]

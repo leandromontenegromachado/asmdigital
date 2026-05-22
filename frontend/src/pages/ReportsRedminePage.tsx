@@ -9,6 +9,7 @@ import { Toasts, ToastItem } from '../components/Toasts';
 import { listConnectors, listRedmineQueries, Connector, RedmineQuery } from '../api/connectors';
 import { generateRedmineReport, getReport, exportReportCsv, exportReportPdf, sendReportNotifications, ReportDetail } from '../api/reports';
 import { runPromptReportTemplate } from '../api/promptReports';
+import { formatApiError } from '../utils/apiErrors';
 import { listNotificationTemplates, NotificationTemplate } from '../api/notifications';
 
 type NotificationModalState = {
@@ -366,9 +367,9 @@ ${rules}`;
       setSearchParams({ report_id: String(result.report_id) });
       pushToast({ title: 'Novo relatorio gerado', description: `Relatorio #${result.report_id} carregado.`, tone: 'success' });
     } catch (err: any) {
-      const detail = err?.response?.data?.detail || 'Falha ao executar novamente com o pedido ajustado.';
-      setError(String(detail));
-      pushToast({ title: 'Falha ao executar novamente', description: String(detail), tone: 'error' });
+      const detail = formatApiError(err?.response?.data?.detail, 'Falha ao executar novamente com o pedido ajustado.');
+      setError(detail);
+      pushToast({ title: 'Falha ao executar novamente', description: detail.split('\n')[0], tone: 'error' });
     } finally {
       setRerunning(false);
       setLoading(false);

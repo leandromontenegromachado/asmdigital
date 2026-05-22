@@ -6,7 +6,7 @@ from app.assistant.actions.base import ActionResult, compact_items
 from app.assistant.actions.list_late_projects import format_late_projects_message, list_late_projects
 from app.assistant.schemas import AssistantPlan
 from app.models import PromptReportTemplate, Report, ReportRow, User
-from app.services.prompt_report_service import run_prompt_report_template
+from app.services.prompt_report_service import PromptInterpretationError, run_prompt_report_template
 
 
 class ReportsAction:
@@ -66,12 +66,20 @@ class ReportsAction:
                     success=False,
                     errors=["missing_template"],
                 )
-            report, filters = run_prompt_report_template(
-                db,
-                template,
-                prompt_override=self._prompt_from_params(plan, params),
-                trigger="assistant",
-            )
+            try:
+                report, filters = run_prompt_report_template(
+                    db,
+                    template,
+                    prompt_override=self._prompt_from_params(plan, params),
+                    trigger="assistant",
+                )
+            except PromptInterpretationError as exc:
+                return ActionResult(
+                    message=self._format_interpretation_error(exc),
+                    data={"status": "needs_prompt_adjustment", **exc.details},
+                    success=False,
+                    errors=["prompt_interpretation_failed"],
+                )
             answer = self._answer_from_report(db, report)
             return ActionResult(
                 message=answer["message"],
@@ -88,6 +96,31 @@ class ReportsAction:
             )
 
         return ActionResult(message="Acao de relatorio nao suportada.", data={}, success=False, errors=["unsupported_action"])
+
+    def _format_interpretation_error(self, exc: PromptInterpretationError) -> str:
+        details = exc.details or {}
+        lines = [str(exc)]
+        issues = details.get("possible_issues") or []
+        if issues:
+            lines.append("\nPontos que podem estar ambíguos:")
+            lines.extend(f"- {item}" for item in issues[:4])
+        identified = details.get("identified") or {}
+        identified_parts = []
+        if identified.get("project_ids"):
+            identified_parts.append(f"projeto: {', '.join(identified['project_ids'])}")
+        if identified.get("status_scope"):
+            identified_parts.append(f"escopo de status: {identified['status_scope']}")
+        if identified.get("columns"):
+            identified_parts.append(f"colunas detectadas: {len(identified['columns'])}")
+        if identified.get("filters"):
+            identified_parts.append(f"filtros detectados: {len(identified['filters'])}")
+        if identified_parts:
+            lines.append("\nO que consegui identificar: " + "; ".join(identified_parts) + ".")
+        suggestions = details.get("suggestions") or []
+        if suggestions:
+            lines.append("\nComo corrigir:")
+            lines.extend(f"- {item}" for item in suggestions[:3])
+        return "\n".join(lines)
 
     def _canonical_action(self, action: str | None) -> str:
         value = (action or "").strip().lower()

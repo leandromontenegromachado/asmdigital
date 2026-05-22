@@ -3,6 +3,7 @@ import { Pencil, Play, Plus, Save, Trash2 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { AppShell } from '../components/AppShell';
 import { Topbar } from '../components/Topbar';
+import { formatApiError } from '../utils/apiErrors';
 import { StateBlock } from '../components/StateBlock';
 import { listConnectors, listRedmineQueries, Connector, RedmineQuery } from '../api/connectors';
 import {
@@ -531,7 +532,7 @@ const PromptReportsPage: React.FC = () => {
       await loadRuns(selectedId);
       navigate(`/reports/redmine-deliveries?report_id=${result.report_id}`);
     } catch (err: any) {
-      const detail = err?.response?.data?.detail || 'Falha ao executar template.';
+      const detail = formatApiError(err?.response?.data?.detail, 'Falha ao executar template.');
       if (String(detail).includes('project_ids or query_id')) {
                 setError('Defina "Projetos padrao (IDs)" ou "Query padrao", salve e execute novamente.');
       } else {

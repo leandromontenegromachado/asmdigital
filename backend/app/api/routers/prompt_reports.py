@@ -14,6 +14,7 @@ from app.schemas.prompt_reports import (
 from app.schemas.reports import ReportOut
 from app.scheduler import scheduler
 from app.services.prompt_report_service import (
+    PromptInterpretationError,
     run_prompt_report_template,
     sync_prompt_report_jobs,
     validate_cron_expression,
@@ -114,6 +115,8 @@ def run_prompt_report_template_now(
         raise HTTPException(status_code=404, detail="Template not found")
     try:
         report, filters = run_prompt_report_template(db, template, prompt_override=payload.prompt_override, trigger="manual")
+    except PromptInterpretationError as exc:
+        raise HTTPException(status_code=422, detail={"message": str(exc), **exc.details}) from exc
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as exc:  # noqa: BLE001
@@ -144,6 +147,8 @@ def run_prompt_report_template_as_routine(
             prompt_override=payload.prompt_override,
             trigger="routine_manual",
         )
+    except PromptInterpretationError as exc:
+        raise HTTPException(status_code=422, detail={"message": str(exc), **exc.details}) from exc
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as exc:  # noqa: BLE001

@@ -29,6 +29,12 @@ logger = logging.getLogger(__name__)
 JOB_PREFIX = "prompt_report_template:"
 
 
+class PromptInterpretationError(ValueError):
+    def __init__(self, message: str, details: dict[str, Any] | None = None):
+        super().__init__(message)
+        self.details = details or {}
+
+
 def _parse_date_token(token: str) -> date | None:
     token = token.strip()
     for pattern in ("%Y-%m-%d", "%d/%m/%Y"):
@@ -81,6 +87,18 @@ def _is_placeholder_project(project_id: str) -> bool:
 
 def _default_project_ids(connector: Connector) -> list[str]:
     return _normalize_project_ids((connector.config_json or {}).get("project_ids", []))
+
+
+def _connector_scoped_project_ids(connector: Connector, requested_project_ids: Any) -> list[str]:
+    connector_projects = _default_project_ids(connector)
+    requested = _normalize_project_ids(requested_project_ids)
+    if not connector_projects:
+        return requested
+    if not requested:
+        return connector_projects
+    allowed = set(connector_projects)
+    scoped = [project_id for project_id in requested if project_id in allowed]
+    return scoped or connector_projects
 
 
 def _should_use_saved_query(prompt: str) -> bool:
@@ -282,7 +300,11 @@ def _parse_excluded_field_values(prompt: str) -> list[dict[str, Any]]:
     for pattern in patterns:
         for match in re.finditer(pattern, normalized, flags=re.IGNORECASE):
             field = _field_from_prompt_label(match.group("field"))
-            values = _split_prompt_list(match.group("values"))
+            values = [
+                re.sub(r"^(?:os|as|com|em|de)\s+", "", value, flags=re.IGNORECASE).strip()
+                for value in _split_prompt_list(match.group("values"))
+            ]
+            values = [value for value in values if value]
             if not field or not values:
                 continue
             if field == "subject" and any(_normalize_prompt_text(item) in {"que estao", "que estejam"} for item in values):
@@ -305,6 +327,48 @@ def _parse_excluded_field_values(prompt: str) -> list[dict[str, Any]]:
             if normalized_values and key not in seen:
                 seen.add(key)
                 rules.append({"field": "status", "operator": "not_in", "values": list(values)})
+    return rules
+
+
+def _parse_included_field_values(prompt: str) -> list[dict[str, Any]]:
+    normalized = _normalize_prompt_text(prompt)
+    field_pattern = (
+        r"status(?:es)?|situacao|prioridade|tipo|tracker|autor|solicitante|responsavel|"
+        r"atribuido(?:\s+para)?|titulo|assunto|demanda|cliente|sistema|entrega"
+    )
+    next_rule = (
+        rf"(?=\s+(?:,|;|\be\b)\s+(?:{field_pattern})\s+"
+        r"(?:somente|apenas|so|igual|diferente|nao|exceto|menos)|"
+        r"\s+(?:com|adicionar|acrescentar|colocar|incluir|tirar|remover|excluir|ocultar|"
+        r"dias?\s+em\s+atraso|colunas?|campos?|orden|periodo|projetos?|query)\b|"
+        r"[\r\n.]|$)"
+    )
+    only_terms = r"(?:somente|apenas|so|igual(?:es)?\s+a|=|:)"
+    optional_link = r"(?:os|as|com|em|de)?"
+    patterns = [
+        rf"(?:na|no|nas|nos)?\s*(?:coluna|campo)\s+(?P<field>{field_pattern})\s+{only_terms}\s+{optional_link}\s*(?P<values>.*?){next_rule}",
+        rf"(?P<field>{field_pattern})\s+{only_terms}\s+{optional_link}\s*(?P<values>.*?){next_rule}",
+        rf"(?:somente|apenas|so|trazer|listar|mostrar|retornar)\s+(?:os|as)?\s*(?:com|em|de)?\s*(?P<field>{field_pattern})\s+(?:em|de|=|:)?\s*(?P<values>.*?){next_rule}",
+    ]
+    rules: list[dict[str, Any]] = []
+    seen: set[tuple[str, tuple[str, ...]]] = set()
+    for pattern in patterns:
+        for match in re.finditer(pattern, normalized, flags=re.IGNORECASE):
+            field = _field_from_prompt_label(match.group("field"))
+            values = [
+                re.sub(r"^(?:os|as|com|em|de)\s+", "", value, flags=re.IGNORECASE).strip()
+                for value in _split_prompt_list(match.group("values"))
+            ]
+            values = [value for value in values if value]
+            if not field or not values:
+                continue
+            if any(_normalize_prompt_text(value) in {"diferente", "nao", "exceto", "menos"} for value in values):
+                continue
+            normalized_values = tuple(dict.fromkeys(_normalize_prompt_text(item) for item in values if item.strip()))
+            key = (field, normalized_values)
+            if normalized_values and key not in seen:
+                seen.add(key)
+                rules.append({"field": field, "operator": "in", "values": list(values)})
     return rules
 
 
@@ -444,6 +508,58 @@ def _cached_prompt_options(defaults: dict[str, Any], prompt: str) -> dict[str, A
         return None
     options = cached.get("prompt_options")
     return options if isinstance(options, dict) else None
+
+
+def _interpretation_failure_details(prompt: str, output: dict[str, Any], error: Exception | None = None) -> dict[str, Any]:
+    prompt_options = output.get("prompt_options") or {}
+    identified = {
+        "project_ids": output.get("project_ids") or [],
+        "status_scope": output.get("status_id"),
+        "columns": prompt_options.get("columns") or [],
+        "filters": prompt_options.get("prompt_filters") or [],
+        "sort": prompt_options.get("sort") or [],
+    }
+    possible_issues = []
+    normalized = _normalize_prompt_text(_objective_text(prompt))
+    if re.search(r"\bstatus|situacao|situação\b", normalized):
+        possible_issues.append("Filtro de status precisa ser interpretado pela IA para diferenciar coluna exibida, escopo aberto/fechado e valor exato do Redmine.")
+    if re.search(r"\bcampo|campos|coluna|colunas|deve\s+ter\b", normalized):
+        possible_issues.append("Lista e ordem de colunas dependem da interpretacao do pedido completo.")
+    if re.search(r"\borden|mais\s+atrasad|menos\s+atrasad\b", normalized):
+        possible_issues.append("Regra de ordenacao precisa ser confirmada para nao inverter o resultado.")
+    if re.search(r"\bdata\s+prevista|vazia|vazio|atras|menor\s+que|maior\s+que\b", normalized):
+        possible_issues.append("Filtro de data precisa ser convertido para campo e operador do Redmine.")
+    if not possible_issues:
+        possible_issues.append("O prompt exige interpretacao semantica e a IA de relatorios nao respondeu.")
+
+    return {
+        "identified": identified,
+        "possible_issues": possible_issues,
+        "ai_error": str(error) if error else None,
+        "suggestions": [
+            "Tente novamente em instantes se o erro for limite 429 do provedor de IA.",
+            "Reformule separando filtros, colunas e ordenacao em frases curtas.",
+            "Use valores de status exatamente como aparecem no Redmine, por exemplo: Status: Homologacao.",
+        ],
+    }
+
+
+def _requires_ai_interpretation(prompt: str) -> bool:
+    normalized = _normalize_prompt_text(_objective_text(prompt))
+    if len(normalized) > 120:
+        return True
+    return bool(
+        re.search(
+            r"\b("
+            r"campo|campos|coluna|colunas|deve\s+ter|somente|apenas|"
+            r"status|situacao|situação|data\s+prevista|vazia|vazio|"
+            r"atras|atrasada|atrasado|orden|menor\s+que|maior\s+que|"
+            r"nao\s+trazer|não\s+trazer|exceto|homologa"
+            r")\b",
+            normalized,
+            flags=re.IGNORECASE,
+        )
+    )
 
 
 def _parse_excluded_status_names(prompt: str) -> list[str]:
@@ -805,6 +921,7 @@ def _parse_prompt_filters(
     numeric_filters = _parse_prompt_numeric_filters(prompt)
     deterministic_filters = [
         *numeric_filters,
+        *_parse_included_field_values(prompt),
         *_parse_empty_field_filters(prompt),
         *_parse_updated_age_filters(prompt),
     ]
@@ -878,11 +995,37 @@ def _parse_prompt_filters(
                     **output["prompt_options"],
                     "sort": deterministic_sort,
                 }
+            output["prompt_options"] = {
+                **output["prompt_options"],
+                "interpreter": "cached",
+                "interpreter_source": cached_options.get("interpreter", "gemini"),
+                "interpreter_error": str(exc),
+            }
+        elif _requires_ai_interpretation(prompt):
+            raise PromptInterpretationError(
+                "Nao consegui interpretar este prompt de relatorio com seguranca porque a IA de interpretacao falhou. "
+                "Nenhum relatorio foi executado para evitar resultado incorreto. Tente novamente em instantes ou ajuste os pontos indicados.",
+                details=_interpretation_failure_details(prompt, output, exc),
+            ) from exc
     else:
         output["prompt_options"] = {
             **output["prompt_options"],
             "interpreter": output["prompt_options"].get("interpreter", "fallback"),
         }
+        if not ai_result and _requires_ai_interpretation(prompt):
+            cached_options = _cached_prompt_options(defaults, prompt)
+            if cached_options:
+                output["prompt_options"] = {
+                    **cached_options,
+                    "interpreter": "cached",
+                    "interpreter_source": cached_options.get("interpreter", "gemini"),
+                }
+            else:
+                raise PromptInterpretationError(
+                    "Nao ha IA de interpretacao configurada/disponivel para este prompt complexo. "
+                    "Nenhum relatorio foi executado para evitar resultado incorreto.",
+                    details=_interpretation_failure_details(prompt, output),
+                )
 
     return output
 
@@ -986,8 +1129,7 @@ def run_prompt_report_template(
         raise ValueError("Prompt is required")
 
     filters = _parse_prompt_filters(db, effective_prompt, template.params_json or {}, connector=connector)
-    if not filters["project_ids"]:
-        filters["project_ids"] = _default_project_ids(connector)
+    filters["project_ids"] = _connector_scoped_project_ids(connector, filters.get("project_ids"))
     if not filters["query_id"] and (
         _should_use_saved_query(effective_prompt)
         or (filters.get("prompt_options") or {}).get("use_saved_query")
