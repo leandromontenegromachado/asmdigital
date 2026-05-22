@@ -76,11 +76,22 @@ EVALUATION_STATUS_ACTION_ALIASES = {
     "employee_evaluation_status",
 }
 
+MEETING_CREATE_ACTION_ALIASES = {
+    "schedule",
+    "schedule_meeting",
+    "create",
+    "create_meeting",
+    "book",
+    "book_meeting",
+    "agenda",
+    "agendar",
+}
+
 
 def interpret_command(text: str, db: Session | None = None, knowledge_context: str | None = None) -> AssistantPlan:
     ai_plan = _interpret_with_ai(text, db, knowledge_context=knowledge_context)
     fallback = deterministic_plan(text)
-    if ai_plan and ai_plan.confidence >= 0.65 and ai_plan.intent != AssistantIntent.UNKNOWN.value:
+    if ai_plan and ai_plan.confidence >= 0.65:
         return _normalize_plan(ai_plan)
     return fallback
 
@@ -98,13 +109,42 @@ def deterministic_plan(text: str) -> AssistantPlan:
     if not normalized:
         return AssistantPlan()
 
-    if normalized in {"ajuda", "help", "/help"} or "o que voce consegue fazer" in normalized or "o que voce pode fazer" in normalized:
+    if (
+        normalized in {"ajuda", "help", "/help"}
+        or "o que voce consegue fazer" in normalized
+        or "o que vc consegue fazer" in normalized
+        or "o que voce pode fazer" in normalized
+        or "o que vc pode fazer" in normalized
+        or "o que mais voce pode fazer" in normalized
+        or "o que mais vc pode fazer" in normalized
+        or "o que mais pode fazer" in normalized
+    ):
         return AssistantPlan(
+            message_type="system_question",
+            should_execute=False,
             intent=AssistantIntent.HELP.value,
             domain="general",
             action="capabilities",
             confidence=0.98,
+            answer_to_user=(
+                "Posso conversar sobre o ASM Digital, explicar telas e processos com base na documentacao, "
+                "consultar informacoes e preparar acoes do sistema. Quando a acao alterar dados ou disparar algo externo, "
+                "eu mostro uma previa e peco confirmacao antes de executar."
+            ),
             summary_for_user="Vou listar as funcionalidades que consigo operar.",
+            permission_required="funcionario",
+        )
+
+    if _looks_like_capability_question(normalized):
+        return AssistantPlan(
+            message_type="capability_question",
+            should_execute=False,
+            intent="capability_question",
+            domain=_capability_domain(normalized),
+            action="answer",
+            confidence=0.78,
+            answer_to_user=_capability_answer(normalized),
+            summary_for_user="Vou responder a pergunta sem executar nenhuma acao.",
             permission_required="funcionario",
         )
 
@@ -291,9 +331,17 @@ def _interpret_with_ai(text: str, db: Session | None, knowledge_context: str | N
         raw = generate_ai_text(
             model,
             system_instruction=(
-                "Voce interpreta comandos do Assistente ASM Digital e responde apenas JSON valido. "
-                "Campos obrigatorios: intent, domain, action, requires_confirmation, confidence, "
-                "extracted_params, missing_params, summary_for_user, risk_level, permission_required. "
+                "Voce e o orquestrador conversacional do Assistente ASM Digital e responde apenas JSON valido. "
+                "Campos obrigatorios: message_type, should_execute, answer_to_user, intent, domain, action, "
+                "requires_confirmation, confidence, extracted_params, missing_params, summary_for_user, "
+                "risk_level, permission_required. "
+                "message_type deve ser um de: greeting, system_question, capability_question, knowledge_question, "
+                "read_query, action_request, action_correction, confirmation, cancellation, unknown. "
+                "should_execute=false para saudacoes, perguntas, duvidas, perguntas de capacidade como 'consegue...', "
+                "'voce pode...', 'como faco...', ou conversas sem pedido claro de executar. Nesses casos preencha "
+                "answer_to_user com uma resposta util e curta. "
+                "should_execute=true apenas quando o usuario pedir explicitamente para executar, consultar, criar, "
+                "enviar, resolver, agendar, listar ou rodar uma funcionalidade do sistema. "
                 "Dominios validos: reports_ai, reports_redmine, routines, notifications, employees, "
                 "management_events, pending_items, evaluation, chefia, connectors, meetings, general. "
                 "Marque requires_confirmation=true para qualquer acao que altere dados ou dispare efeitos externos. "
@@ -324,16 +372,25 @@ def _normalize_plan(plan: AssistantPlan) -> AssistantPlan:
             action = "list"
     elif domain == "evaluation" and action in EVALUATION_STATUS_ACTION_ALIASES:
         action = "status"
+    elif domain == "meetings" and action in MEETING_CREATE_ACTION_ALIASES:
+        action = "create"
+        if plan.intent in {AssistantIntent.UNKNOWN.value, "schedule_meeting", "schedule"}:
+            plan = plan.model_copy(update={"intent": AssistantIntent.CREATE_MEETING.value})
 
     if original_action != action:
         params.setdefault("requested_action", original_action)
 
-    requires_confirmation = bool(plan.requires_confirmation or (domain, action) in CONFIRMATION_ACTIONS)
+    should_execute = bool(plan.should_execute)
+    if plan.message_type in {"greeting", "system_question", "capability_question", "knowledge_question"}:
+        should_execute = False
+
+    requires_confirmation = bool(should_execute and (plan.requires_confirmation or (domain, action) in CONFIRMATION_ACTIONS))
     return plan.model_copy(
         update={
             "domain": domain,
             "action": action,
             "extracted_params": params,
+            "should_execute": should_execute,
             "requires_confirmation": requires_confirmation,
         }
     )
@@ -436,3 +493,69 @@ def _owner_from_report_text(text: str) -> str | None:
 def _template_id_from_text(text: str) -> int | None:
     match = re.search(r"(?:template|modelo|relatorio|relat[oó]rio)\s*#?\s*(\d+)", text, flags=re.IGNORECASE)
     return int(match.group(1)) if match else None
+
+
+def _looks_like_capability_question(normalized: str) -> bool:
+    prefixes = (
+        "consegue",
+        "vc consegue",
+        "voce consegue",
+        "você consegue",
+        "pode",
+        "vc pode",
+        "voce pode",
+        "você pode",
+        "sabe",
+        "da para",
+        "dá para",
+        "e possivel",
+        "é possivel",
+        "é possível",
+    )
+    direct_markers = (
+        "me liste",
+        "me listar",
+        "me mostra",
+        "me mostrar",
+        "me traga",
+        "me trazer",
+        "liste ",
+        "listar ",
+        "rode ",
+        "execute ",
+        "crie ",
+        "cadastre ",
+        "envie ",
+        "resolva ",
+        "agende ",
+    )
+    return normalized.startswith(prefixes) and not any(marker in normalized for marker in direct_markers)
+
+
+def _capability_domain(normalized: str) -> str:
+    if any(word in normalized for word in ("agendar", "agenda", "reuniao", "reunião")):
+        return "meetings"
+    if "360" in normalized or "avaliacao" in normalized:
+        return "evaluation"
+    if "redmine" in normalized or "relatorio" in normalized or "demandas" in normalized:
+        return "reports_redmine"
+    if "rotina" in normalized:
+        return "routines"
+    if "notificacao" in normalized or "notificar" in normalized:
+        return "notifications"
+    return "general"
+
+
+def _capability_answer(normalized: str) -> str:
+    domain = _capability_domain(normalized)
+    if domain == "meetings":
+        return "Sim, posso ajudar com agendamento de reunioes. Como voce perguntou, nao vou criar nada agora. Para iniciar, peca diretamente: agende uma reuniao amanha as 10h com Maria sobre demandas atrasadas."
+    if domain == "evaluation":
+        return "Sim, posso consultar Avaliacao 360 por funcionario e resumir ciclo, notas, feedbacks, analise IA e alertas quando houver dados."
+    if domain == "reports_redmine":
+        return "Sim, posso consultar ou preparar relatorios Redmine. Uma nova execucao de relatorio pede confirmacao antes de rodar."
+    if domain == "routines":
+        return "Sim, posso consultar rotinas e preparar criacao, edicao ou execucao. Acoes com impacto exigem confirmacao."
+    if domain == "notifications":
+        return "Sim, posso preparar notificacoes. Envio de notificacao sempre exige previa e confirmacao."
+    return "Sim, posso responder duvidas sobre o ASM Digital e operar funcionalidades do sistema quando voce pedir uma acao especifica."

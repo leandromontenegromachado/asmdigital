@@ -3,7 +3,6 @@ import {
   AlertTriangle,
   Bot,
   CheckCircle2,
-  Clock3,
   History,
   Loader2,
   Mic,
@@ -64,8 +63,42 @@ const stringifyValue = (value: any) => {
   return String(value);
 };
 
+const hiddenAssistantDataKeys = new Set([
+  'answer_to_user',
+  'context',
+  'knowledge_hits',
+  'knowledge_context',
+  'message_type',
+  'missing_params',
+  'permission_required',
+  'raw',
+  'raw_context',
+  'requires_confirmation',
+  'risk_level',
+  'should_execute',
+  'summary_for_user',
+  'debug',
+  'metadata',
+  'source',
+]);
+
+const isHiddenAssistantDataKey = (key: string) => {
+  const normalized = key.toLowerCase();
+  return hiddenAssistantDataKeys.has(normalized) || normalized.startsWith('_') || normalized.endsWith('_debug');
+};
+
+const visibleAssistantEntries = (value: Record<string, any>) =>
+  Object.entries(value || {}).filter(([, item]) => item !== null && item !== undefined && item !== '');
+
+const hasVisibleAssistantData = (value?: Record<string, any> | null) =>
+  visibleAssistantEntries(
+    Object.fromEntries(Object.entries(value || {}).filter(([key]) => !isHiddenAssistantDataKey(key)))
+  ).length > 0;
+
 const DataPanel: React.FC<{ value: Record<string, any>; compact?: boolean }> = ({ value, compact = false }) => {
-  const data = value || {};
+  const data = Object.fromEntries(
+    Object.entries(value || {}).filter(([key]) => !isHiddenAssistantDataKey(key))
+  );
   const itemList = Array.isArray(data.items) ? data.items : null;
   const capabilities = Array.isArray(data.capabilities) ? data.capabilities : null;
 
@@ -83,16 +116,19 @@ const DataPanel: React.FC<{ value: Record<string, any>; compact?: boolean }> = (
   }
 
   if (itemList) {
+    const visibleItems = itemList.slice(0, 25);
+    const reportedTotal = typeof data.total !== 'undefined' ? Number(data.total) : itemList.length;
     return (
       <div className="space-y-2">
-        {typeof data.total !== 'undefined' && (
-          <p className="text-xs font-bold uppercase text-slate-500">Total: {data.total}</p>
-        )}
+        <p className="text-xs font-bold uppercase text-slate-500">
+          Total: {Number.isNaN(reportedTotal) ? data.total : reportedTotal}
+          {visibleItems.length < itemList.length && ` | mostrando ${visibleItems.length} de ${itemList.length}`}
+        </p>
         <div className="grid gap-2">
-          {itemList.slice(0, compact ? 4 : 8).map((item: any, index: number) => (
+          {visibleItems.map((item: any, index: number) => (
             <div key={item.id || index} className="rounded-lg border border-slate-200 bg-white p-3">
               <div className="grid gap-2 sm:grid-cols-2">
-                {Object.entries(item).slice(0, 8).map(([key, rawValue]) => (
+                {Object.entries(item).filter(([key]) => !isHiddenAssistantDataKey(key)).slice(0, 8).map(([key, rawValue]) => (
                   <div key={key} className="min-w-0">
                     <p className="text-[11px] font-black uppercase text-slate-400">{humanizeKey(key)}</p>
                     <p className="truncate text-sm font-semibold text-slate-800">{stringifyValue(rawValue)}</p>
@@ -106,7 +142,7 @@ const DataPanel: React.FC<{ value: Record<string, any>; compact?: boolean }> = (
     );
   }
 
-  const entries = Object.entries(data).filter(([, item]) => item !== null && item !== undefined && item !== '');
+  const entries = visibleAssistantEntries(data);
   if (!entries.length) return <p className="text-sm text-slate-500">Nenhum dado estruturado retornado.</p>;
 
   return (
@@ -121,15 +157,70 @@ const DataPanel: React.FC<{ value: Record<string, any>; compact?: boolean }> = (
   );
 };
 
+const FormattedText: React.FC<{ text: string; isUser?: boolean }> = ({ text, isUser = false }) => {
+  const lines = text.split('\n').map((line) => line.trim()).filter(Boolean);
+  if (lines.length === 0) return null;
+
+  const blocks: React.ReactNode[] = [];
+  let index = 0;
+  while (index < lines.length) {
+    const bulletItems: string[] = [];
+    while (index < lines.length && /^[-*]\s+/.test(lines[index])) {
+      bulletItems.push(lines[index].replace(/^[-*]\s+/, ''));
+      index += 1;
+    }
+    if (bulletItems.length) {
+      blocks.push(
+        <ul key={`ul-${index}`} className="my-2 list-disc space-y-1 pl-5">
+          {bulletItems.map((item, itemIndex) => (
+            <li key={`${item}-${itemIndex}`} className="break-words">{item}</li>
+          ))}
+        </ul>
+      );
+      continue;
+    }
+
+    const numberedItems: string[] = [];
+    while (index < lines.length && /^\d+[.)]\s+/.test(lines[index])) {
+      numberedItems.push(lines[index].replace(/^\d+[.)]\s+/, ''));
+      index += 1;
+    }
+    if (numberedItems.length) {
+      blocks.push(
+        <ol key={`ol-${index}`} className="my-2 list-decimal space-y-1 pl-5">
+          {numberedItems.map((item, itemIndex) => (
+            <li key={`${item}-${itemIndex}`} className="break-words">{item}</li>
+          ))}
+        </ol>
+      );
+      continue;
+    }
+
+    blocks.push(
+      <p key={`p-${index}`} className="break-words">
+        {lines[index]}
+      </p>
+    );
+    index += 1;
+  }
+
+  return (
+    <div className={`space-y-2 text-sm leading-6 ${isUser ? 'text-white' : 'text-slate-800'}`}>
+      {blocks}
+    </div>
+  );
+};
+
 const ConfirmationCard: React.FC<{
   response: AssistantResponse;
   busy: boolean;
   onConfirm: (confirmationId: string, confirmed: boolean) => void;
 }> = ({ response, busy, onConfirm }) => {
-  if (!response.requires_confirmation || !response.confirmation_id) return null;
   const preview = response.preview || {};
   const params = preview.params || response.data || {};
   const missing = response.missing_params || preview.missing_params || [];
+  if (!response.confirmation_id || (!response.requires_confirmation && missing.length === 0)) return null;
+  const waitingForInput = missing.length > 0;
 
   return (
     <div className="mt-4 w-full overflow-hidden rounded-xl border border-blue-200 bg-blue-50">
@@ -137,10 +228,12 @@ const ConfirmationCard: React.FC<{
         <div className="min-w-0">
           <div className="flex items-center gap-2 text-blue-950">
             <ShieldCheck size={18} className="shrink-0" />
-            <p className="text-sm font-black">Confirmacao necessaria</p>
+            <p className="text-sm font-black">{waitingForInput ? 'Informacoes necessarias' : 'Confirmacao necessaria'}</p>
           </div>
           <p className="mt-1 max-w-3xl text-sm leading-6 text-blue-900">
-            {preview.impact || preview.summary || 'Revise os dados antes de executar esta acao.'}
+            {waitingForInput
+              ? 'Envie uma nova mensagem com os dados faltantes ou corrija alguma informacao abaixo.'
+              : preview.impact || preview.summary || 'Revise os dados antes de executar esta acao.'}
           </p>
         </div>
         <div className="grid grid-cols-2 gap-2 sm:flex sm:shrink-0">
@@ -150,7 +243,7 @@ const ConfirmationCard: React.FC<{
             className="inline-flex items-center justify-center gap-2 rounded-lg bg-primary px-3 py-2 text-sm font-black text-white hover:bg-blue-600 disabled:opacity-60"
           >
             {busy ? <Loader2 size={16} className="animate-spin" /> : <CheckCircle2 size={16} />}
-            Confirmar
+            {waitingForInput ? 'Aguardando dados' : 'Confirmar'}
           </button>
           <button
             onClick={() => onConfirm(response.confirmation_id as string, false)}
@@ -200,10 +293,10 @@ const AssistantBubble: React.FC<{
             </span>
           </div>
         )}
-        <p className="whitespace-pre-wrap break-words text-sm leading-6">{message.text}</p>
+        <FormattedText text={message.text} isUser={isUser} />
         <p className={`mt-2 text-[11px] ${isUser ? 'text-blue-100' : 'text-slate-400'}`}>{formatDate(message.createdAt)}</p>
 
-        {response && !response.requires_confirmation && Object.keys(response.data || {}).length > 0 && (
+        {response && !response.requires_confirmation && hasVisibleAssistantData(response.data) && (
           <div className="mt-3 rounded-xl bg-slate-50 p-3">
             {response.data.report_url && (
               <a
@@ -244,11 +337,10 @@ const AssistantPage: React.FC = () => {
   const [busyConfirmation, setBusyConfirmation] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [voiceState, setVoiceState] = useState<VoiceState>('idle');
-  const [compactLayout, setCompactLayout] = useState(false);
   const recognitionRef = useRef<any>(null);
   const chatEndRef = useRef<HTMLDivElement | null>(null);
 
-  const recentActions = useMemo(() => history.slice(0, 8), [history]);
+  const recentActions = useMemo(() => history.slice(0, 4), [history]);
   const pendingCount = useMemo(
     () => messages.filter((item) => item.response?.requires_confirmation).length,
     [messages]
@@ -261,40 +353,6 @@ const AssistantPage: React.FC = () => {
       const [historyData, capabilityData] = await Promise.all([listAssistantHistory(), listAssistantCapabilities()]);
       setHistory(historyData);
       setCapabilities(capabilityData.capabilities || []);
-      if (messages.length === 0 && historyData.length > 0) {
-        setMessages(
-          historyData
-            .slice(0, 6)
-            .reverse()
-            .flatMap((item) => [
-              {
-                id: `history-user-${item.id}`,
-                role: 'user' as const,
-                text: item.text,
-                createdAt: item.created_at,
-              },
-              {
-                id: `history-assistant-${item.id}`,
-                role: 'assistant' as const,
-                text: item.response_message || 'Sem resposta registrada.',
-                createdAt: item.created_at,
-                response: {
-                  success: item.success,
-                  message: item.response_message || '',
-                  intent: item.intent,
-                  domain: item.domain,
-                  action: item.action,
-                  requires_confirmation: Boolean(item.raw_payload_json?.confirmation_id),
-                  confirmation_id: item.raw_payload_json?.confirmation_id || null,
-                  preview: item.raw_payload_json?.preview || {},
-                  missing_params: item.raw_payload_json?.plan?.missing_params || [],
-                  data: item.raw_payload_json?.result || {},
-                  errors: item.raw_payload_json?.errors || [],
-                },
-              },
-            ])
-        );
-      }
     } catch (err) {
       setError('Nao foi possivel carregar o assistente.');
     } finally {
@@ -304,15 +362,6 @@ const AssistantPage: React.FC = () => {
 
   useEffect(() => {
     loadPage();
-  }, []);
-
-  useEffect(() => {
-    const updateLayout = () => {
-      setCompactLayout(window.innerWidth < 1280 || window.innerHeight < 880);
-    };
-    updateLayout();
-    window.addEventListener('resize', updateLayout);
-    return () => window.removeEventListener('resize', updateLayout);
   }, []);
 
   useEffect(() => {
@@ -420,7 +469,7 @@ const AssistantPage: React.FC = () => {
 
   return (
     <AppShell>
-      <div className="flex min-h-[calc(100dvh-2rem)] flex-col gap-3 md:min-h-[calc(100dvh-3rem)] lg:min-h-[calc(100dvh-4rem)]">
+      <div className="flex h-[calc(100dvh-2rem)] min-h-0 flex-col gap-3 md:h-[calc(100dvh-3rem)] lg:h-[calc(100dvh-4rem)]">
         <header className="shrink-0 rounded-2xl border border-slate-200 bg-white px-4 py-3 shadow-sm sm:px-5">
           <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
             <div className="min-w-0">
@@ -453,58 +502,97 @@ const AssistantPage: React.FC = () => {
         {loading && <StateBlock tone="loading" title="Carregando assistente" description="Aguarde alguns segundos." />}
 
         {!loading && (
-          <div className={`grid min-h-0 flex-1 items-start gap-4 ${compactLayout ? 'grid-cols-1' : 'xl:grid-cols-[minmax(0,1fr)_340px]'}`}>
-            <section className="flex h-[calc(100dvh-136px)] min-h-[520px] min-w-0 flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm sm:h-[calc(100dvh-148px)] lg:h-[calc(100dvh-152px)]">
-              <div className="shrink-0 border-b border-slate-100 bg-white px-4 py-2.5 sm:px-5">
-              <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
-                <div className="flex items-start gap-3">
+          <div className="grid min-h-0 flex-1 items-stretch">
+            <section className="flex h-full min-h-0 min-w-0 flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
+              <div className="shrink-0 border-b border-slate-100 bg-white px-4 py-3 sm:px-5">
+              <div className="grid gap-3 xl:grid-cols-[minmax(0,1fr)_auto] xl:items-center">
+                <div className="flex min-w-0 items-start gap-3">
                   <div className="rounded-xl border border-blue-100 bg-blue-50 p-3 text-primary">
-                    <Sparkles size={24} />
+                    <Sparkles size={22} />
                   </div>
                   <div className="min-w-0">
-                    <h3 className="text-lg font-black text-slate-900 sm:text-xl">Central de comandos</h3>
-                    <p className={`${compactLayout ? 'hidden md:block' : ''} mt-1 max-w-2xl text-sm leading-6 text-slate-500`}>
-                      Consulte dados direto pelo chat. Acoes com impacto ficam pendentes ate voce confirmar.
+                    <h3 className="text-lg font-black text-slate-900">Central de comandos</h3>
+                    <p className="mt-1 text-sm leading-5 text-slate-500">
+                      Converse, consulte dados e confirme apenas acoes com impacto.
                     </p>
                   </div>
                 </div>
-                <div className={`${compactLayout ? 'hidden lg:grid' : 'grid'} grid-cols-3 gap-2 text-center`}>
+                <div className="grid grid-cols-3 gap-2 text-center">
                   <div className="rounded-xl border border-slate-200 bg-white px-3 py-2">
                     <p className="text-base font-black text-slate-900">{messages.length}</p>
-                    <p className="text-[11px] font-bold uppercase text-slate-500">mensagens</p>
+                    <p className="text-[10px] font-bold uppercase text-slate-500">mensagens</p>
                   </div>
                   <div className="rounded-xl border border-blue-100 bg-blue-50 px-3 py-2">
                     <p className="text-base font-black text-blue-700">{pendingCount}</p>
-                    <p className="text-[11px] font-bold uppercase text-blue-600">confirmar</p>
+                    <p className="text-[10px] font-bold uppercase text-blue-600">confirmar</p>
                   </div>
                   <div className="rounded-xl border border-emerald-100 bg-emerald-50 px-3 py-2">
                     <p className="text-base font-black text-emerald-700">{capabilities.length}</p>
-                    <p className="text-[11px] font-bold uppercase text-emerald-600">areas</p>
+                    <p className="text-[10px] font-bold uppercase text-emerald-600">areas</p>
                   </div>
                 </div>
               </div>
+              {messages.length === 0 && capabilities.length > 0 && (
+                <div className="mt-3 flex gap-2 overflow-x-auto pb-1">
+                  {capabilities.slice(0, 8).map((item) => (
+                    <button
+                      key={item.domain}
+                      type="button"
+                      onClick={() => setMessage(`O que voce consegue fazer em ${item.label || item.domain}?`)}
+                      className="shrink-0 rounded-full border border-slate-200 bg-slate-50 px-3 py-1.5 text-xs font-bold text-slate-600 hover:border-blue-200 hover:bg-blue-50 hover:text-blue-700"
+                    >
+                      {item.label}
+                    </button>
+                  ))}
+                </div>
+              )}
             </div>
 
             <div className="min-h-0 flex-1 space-y-4 overflow-y-auto bg-slate-50/80 px-3 py-4 sm:px-5">
               {messages.length === 0 ? (
-                <div className="mx-auto max-w-3xl rounded-2xl border border-dashed border-slate-300 bg-white p-5 text-center shadow-sm">
-                  <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl border border-blue-100 bg-blue-50 text-primary">
-                    <Bot size={28} />
+                <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_320px]">
+                  <div className="rounded-2xl border border-dashed border-slate-300 bg-white p-5 shadow-sm">
+                    <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl border border-blue-100 bg-blue-50 text-primary">
+                      <Bot size={28} />
+                    </div>
+                    <h3 className="mt-4 text-center text-lg font-black text-slate-900">Comece com um comando</h3>
+                    <p className="mt-2 text-center text-sm leading-6 text-slate-500">
+                      Use voz ou texto para pedir consultas, criar rotinas, resolver pendencias ou enviar notificacoes com confirmacao.
+                    </p>
+                    <div className="mt-4 grid gap-2 sm:grid-cols-2">
+                      {examplePrompts.map((prompt) => (
+                        <button
+                          key={prompt}
+                          onClick={() => setMessage(prompt)}
+                          className="rounded-xl border border-slate-200 px-3 py-2 text-left text-sm font-bold text-slate-700 hover:border-blue-200 hover:bg-blue-50 hover:text-blue-700"
+                        >
+                          {prompt}
+                        </button>
+                      ))}
+                    </div>
                   </div>
-                  <h3 className="mt-4 text-lg font-black text-slate-900">Comece com um comando</h3>
-                  <p className="mt-2 text-sm leading-6 text-slate-500">
-                    Use voz ou texto para pedir consultas, criar rotinas, resolver pendencias ou enviar notificacoes com confirmacao.
-                  </p>
-                  <div className="mt-4 grid gap-2 sm:grid-cols-2">
-                    {examplePrompts.map((prompt) => (
-                      <button
-                        key={prompt}
-                        onClick={() => setMessage(prompt)}
-                        className="rounded-xl border border-slate-200 px-3 py-2 text-left text-sm font-bold text-slate-700 hover:border-blue-200 hover:bg-blue-50 hover:text-blue-700"
-                      >
-                        {prompt}
-                      </button>
-                    ))}
+                  <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+                    <div className="flex items-center gap-2">
+                      <History size={17} className="text-primary" />
+                      <h3 className="text-sm font-black uppercase tracking-wide text-slate-700">Ultimas acoes</h3>
+                    </div>
+                    <div className="mt-3 grid gap-2">
+                      {recentActions.length === 0 ? (
+                        <p className="text-sm text-slate-500">Nenhum comando registrado.</p>
+                      ) : (
+                        recentActions.map((item) => (
+                          <button
+                            key={item.id}
+                            type="button"
+                            onClick={() => setMessage(item.text)}
+                            className="rounded-xl border border-slate-200 p-3 text-left hover:border-blue-200 hover:bg-blue-50"
+                          >
+                            <p className="line-clamp-2 text-sm font-bold text-slate-800">{item.text}</p>
+                            <p className="mt-1 text-xs text-slate-500">{item.domain || item.intent || '-'} - {formatDate(item.created_at)}</p>
+                          </button>
+                        ))
+                      )}
+                    </div>
                   </div>
                 </div>
               ) : (
@@ -529,10 +617,10 @@ const AssistantPage: React.FC = () => {
             </div>
 
             <div className="sticky bottom-0 z-10 shrink-0 border-t border-slate-100 bg-white/95 p-3 shadow-[0_-12px_28px_rgba(15,23,42,0.06)] backdrop-blur">
-              <div className="flex flex-col gap-2.5">
-                <div className="min-w-0 flex-1">
+              <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_180px] lg:items-start">
+                <div className="min-w-0">
                   <textarea
-                    className="max-h-36 min-h-16 w-full resize-y rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-primary focus:bg-white"
+                    className="max-h-32 min-h-16 w-full resize-y rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-primary focus:bg-white"
                     value={message}
                     onChange={(event) => setMessage(event.target.value)}
                     onKeyDown={(event) => {
@@ -547,11 +635,11 @@ const AssistantPage: React.FC = () => {
                     {voiceState === 'unsupported' && <span className="font-bold text-amber-700">Voz indisponivel neste navegador.</span>}
                   </div>
                 </div>
-                <div className="grid grid-cols-2 gap-2.5 sm:flex sm:items-center sm:justify-between">
+                <div className="grid grid-cols-2 gap-2.5 lg:grid-cols-1">
                   <button
                     type="button"
                     onClick={startVoiceInput}
-                    className={`inline-flex items-center justify-center gap-2 rounded-xl px-5 py-3 text-sm font-black shadow-sm transition sm:w-44 ${
+                    className={`inline-flex items-center justify-center gap-2 rounded-xl px-5 py-3 text-sm font-black shadow-sm transition ${
                       voiceState === 'listening'
                         ? 'bg-red-600 text-white hover:bg-red-700'
                         : 'bg-slate-900 text-white hover:bg-slate-800'
@@ -563,7 +651,7 @@ const AssistantPage: React.FC = () => {
                   <button
                     onClick={() => handleSendText(message)}
                     disabled={sending || !message.trim()}
-                    className="inline-flex items-center justify-center gap-2 rounded-xl bg-primary px-5 py-3 text-sm font-black text-white shadow-sm hover:bg-blue-600 disabled:opacity-60 sm:w-44"
+                    className="inline-flex items-center justify-center gap-2 rounded-xl bg-primary px-5 py-3 text-sm font-black text-white shadow-sm hover:bg-blue-600 disabled:opacity-60"
                   >
                     {sending ? <Loader2 size={18} className="animate-spin" /> : <Send size={18} />}
                     Enviar
@@ -573,51 +661,6 @@ const AssistantPage: React.FC = () => {
             </div>
           </section>
 
-          <aside className={`${compactLayout ? 'hidden' : 'grid'} min-w-0 gap-4 lg:grid-cols-2 xl:grid-cols-1`}>
-            <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-              <div className="flex items-center justify-between gap-2">
-                <div className="flex items-center gap-2">
-                  <History size={18} className="text-primary" />
-                  <h3 className="text-lg font-black text-slate-900">Ultimas acoes</h3>
-                </div>
-                <Clock3 size={16} className="text-slate-400" />
-              </div>
-              <div className="mt-4 grid gap-3">
-                {recentActions.length === 0 ? (
-                  <p className="text-sm text-slate-500">Nenhum comando registrado.</p>
-                ) : (
-                  recentActions.map((item) => (
-                    <button
-                      key={item.id}
-                      type="button"
-                      onClick={() => setMessage(item.text)}
-                      className="rounded-xl border border-slate-200 p-3 text-left hover:border-blue-200 hover:bg-blue-50"
-                    >
-                      <div className="flex items-start justify-between gap-2">
-                        <p className="line-clamp-2 text-sm font-bold text-slate-800">{item.text}</p>
-                        <span className={`shrink-0 rounded-full px-2 py-1 text-[11px] font-black ${item.success ? 'bg-emerald-100 text-emerald-700' : 'bg-red-100 text-red-700'}`}>
-                          {item.success ? 'ok' : 'erro'}
-                        </span>
-                      </div>
-                      <p className="mt-2 text-xs text-slate-500">{item.domain || item.intent || '-'} - {formatDate(item.created_at)}</p>
-                    </button>
-                  ))
-                )}
-              </div>
-            </section>
-
-            <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-              <h3 className="text-lg font-black text-slate-900">Capacidades</h3>
-              <div className="mt-4 grid gap-2">
-                {capabilities.slice(0, 12).map((item) => (
-                  <div key={item.domain} className="rounded-xl bg-slate-50 px-3 py-2">
-                    <p className="text-sm font-black text-slate-800">{item.label}</p>
-                    <p className="mt-1 text-xs leading-5 text-slate-500">{(item.actions || []).join(', ')}</p>
-                  </div>
-                ))}
-              </div>
-            </section>
-            </aside>
           </div>
         )}
       </div>

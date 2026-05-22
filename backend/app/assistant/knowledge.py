@@ -57,13 +57,16 @@ class AssistantKnowledgeService:
         self.db = db
 
     def ensure_seeded(self) -> int:
-        existing = self.db.query(AssistantKnowledgeDocument).filter(
-            AssistantKnowledgeDocument.source_key.like("system:%")
-        ).count()
-        if existing:
-            return 0
+        existing_keys = {
+            source_key
+            for (source_key,) in self.db.query(AssistantKnowledgeDocument.source_key)
+            .filter(AssistantKnowledgeDocument.source_key.like("system:%"))
+            .all()
+        }
         count = 0
         for doc in SYSTEM_DOCUMENTS:
+            if doc["source_key"] in existing_keys:
+                continue
             self.upsert_document(**doc)
             count += 1
         self.db.commit()
@@ -285,6 +288,24 @@ Resolver, ignorar ou escalar pendencia altera dados e exige confirmacao.
 Regras iniciais de permissao do Assistente: admin pode executar tudo; gerente pode consultar e executar acoes operacionais como relatorios, rotinas, notificacoes e pendencias; funcionario pode consultar informacoes permitidas e solicitar leituras.
 Acoes administrativas exigem admin.
 Nenhuma acao que altera dados deve ser executada diretamente: criar ou editar templates, criar rotinas, enviar notificacoes, criar ou resolver pendencias, alterar funcionarios, alterar regras, agendar reuniao e alterar conectores exigem confirmacao.
+""",
+    },
+    {
+        "source_key": "system:usage-guide",
+        "title": "Guia de Uso ASM Digital",
+        "domain": "general",
+        "metadata_json": {"generated_from": "docs/USAGE.md"},
+        "content": """
+O ASM Digital e uma aplicacao web para gestao operacional, relatorios e automacoes internas.
+Modulos principais: autenticacao e usuarios, conectores Redmine e Azure DevOps, relatorios Redmine, relatorios por linguagem natural, rotinas, funcionarios, notificacoes inteligentes, avaliacao, ChefIA/Fala AI, eventos gerenciais, pendencias e integracoes MCP.
+Em ambiente local, o frontend roda em http://localhost:3000, o backend em http://localhost:8000 e a documentacao OpenAPI em http://localhost:8000/docs.
+Para publicar no servidor de teste, a operacao padrao e entrar na pasta do projeto, executar git pull origin main, reconstruir backend/frontend e subir os servicos com docker compose.
+Relatorios Redmine permitem selecionar conector, projeto, periodo e query salva, gerar relatorio, consultar resultado e exportar CSV/PDF.
+Relatorios IA permitem criar templates de prompts reutilizaveis, gerar prompt Markdown, executar sob demanda e configurar agendamento simples por hora e dias da semana.
+Rotinas mostram relatorios agendados, rotinas cadastradas e ultimas execucoes. Uma rotina pode conter tarefas como relatorio Redmine, prompt report, Azure DevOps quadro, webhook, sleep ou custom.
+Funcionarios sao usados por notificacoes, avaliacao e outros modulos. Campos importantes: nome, email, matricula, Teams user ID, cargo, setor, gestor, status ativo, recebe notificacao, participa avaliacao e canal preferencial.
+Notificacoes inteligentes usam templates e regras por rotina, destinatario, canal preferencial, fallback e aprovacao. Canais previstos: email, Teams e interna. Sem SMTP configurado, o envio e simulado/registrado.
+O Assistente de Gestao Multicanal recebe comandos pela web, Telegram, atalho de voz, Teams e rotinas. Perguntas devem ser respondidas como orientacao; acoes reais devem passar pelo Assistant Core, validar permissao, montar previa e pedir confirmacao quando alterarem dados ou tiverem impacto externo.
 """,
     },
 ]

@@ -75,6 +75,132 @@ def test_ai_evaluation_action_alias_is_normalized():
     assert plan.extracted_params["requested_action"] == "get_employee_evaluation"
 
 
+def test_ai_meeting_schedule_alias_uses_legacy_meeting_flow():
+    plan = _normalize_plan(
+        AssistantPlan(
+            intent="schedule_meeting",
+            domain="meetings",
+            action="schedule",
+            confidence=0.9,
+            extracted_params={"text": "consegue agendar uma reuniao"},
+        )
+    )
+
+    assert plan.intent == "create_meeting"
+    assert plan.domain == "meetings"
+    assert plan.action == "create"
+
+
+def test_capability_question_about_meeting_does_not_execute_schedule():
+    db = MagicMock()
+    service = AssistantCoreService(db)
+
+    with patch.object(service, "_log"):
+        response = service.process_command(
+            AssistantCommand(text="consegue agendar uma reuniao?", user_id="1", user_name="Leandro", channel="web"),
+            user=MagicMock(id=1, name="Leandro", role="funcionario"),
+        )
+
+    assert response.success is True
+    assert response.intent == "capability_question"
+    assert response.action == "answer"
+    assert "nao vou criar nada agora" in response.message
+
+
+def test_capability_phrase_without_question_mark_does_not_execute_schedule():
+    db = MagicMock()
+    service = AssistantCoreService(db)
+
+    with patch.object(service, "_log"):
+        response = service.process_command(
+            AssistantCommand(text="consegue agendar uma reuniao", user_id="1", user_name="Leandro", channel="web"),
+            user=MagicMock(id=1, name="Leandro", role="funcionario"),
+        )
+
+    assert response.success is True
+    assert response.intent == "capability_question"
+    assert response.action == "answer"
+
+
+def test_abbreviated_capability_phrase_does_not_execute_schedule():
+    db = MagicMock()
+    service = AssistantCoreService(db)
+
+    with patch.object(service, "_log"):
+        response = service.process_command(
+            AssistantCommand(text="vc consegue agendar uma reuniao no teams ?", user_id="1", user_name="Leandro", channel="web"),
+            user=MagicMock(id=1, name="Leandro", role="funcionario"),
+        )
+
+    assert response.success is True
+    assert response.intent == "capability_question"
+    assert response.action == "answer"
+
+
+def test_direct_meeting_request_still_uses_meeting_flow():
+    db = MagicMock()
+    service = AssistantCoreService(db)
+
+    with patch.object(service, "_log"):
+        response = service.process_command(
+            AssistantCommand(text="agende uma reuniao", user_id="1", user_name="Leandro", channel="web"),
+            user=MagicMock(id=1, name="Leandro", role="funcionario"),
+        )
+
+    assert response.message == "LEGACY_ASSISTANT_FALLBACK"
+    assert response.domain == "meetings"
+
+
+def test_greeting_does_not_continue_pending_input():
+    service = AssistantCoreService(MagicMock())
+    plan = AssistantPlan(
+        intent="run_report",
+        domain="reports_redmine",
+        action="run_report",
+        requires_confirmation=True,
+        extracted_params={"text": "pode ser com as demandas do redmine"},
+        missing_params=["owner"],
+        permission_required="manager",
+    )
+    action = SimpleNamespace(
+        id=77,
+        payload_json={"plan": plan.model_dump(), "preview": {"params": plan.extracted_params}},
+        status="needs_input",
+    )
+
+    assert service._should_continue_pending_input("bom dia", action) is False
+
+
+def test_system_question_does_not_continue_pending_input():
+    db = MagicMock()
+    service = AssistantCoreService(db)
+    user = MagicMock(id=1, name="Leandro", role="funcionario")
+    plan = AssistantPlan(
+        intent="run_report",
+        domain="reports_redmine",
+        action="run_report",
+        requires_confirmation=True,
+        extracted_params={"text": "pode ser com as demandas do redmine"},
+        missing_params=["owner"],
+        permission_required="manager",
+    )
+    action = SimpleNamespace(
+        id=77,
+        payload_json={"plan": plan.model_dump(), "preview": {"params": plan.extracted_params}},
+        status="needs_input",
+    )
+
+    with patch.object(service, "_pending_input_action", return_value=action), patch.object(service, "_log"):
+        response = service.process_command(
+            AssistantCommand(text="o que mais vc pode fazer", user_id="1", user_name="Leandro", channel="web"),
+            user=user,
+        )
+
+    assert response.success is True
+    assert response.action == "capabilities"
+    assert "Areas que conheco" in response.message
+
+
 def test_contextual_name_correction_reuses_previous_report_plan():
     service = AssistantCoreService(MagicMock())
     previous = AssistantPlan(
@@ -251,6 +377,26 @@ def test_confirmation_executes_action():
     assert response.message == "Rotina criada."
     assert action.status == "completed"
     assert action.result_json["id"] == 10
+
+
+def test_pending_input_merge_fills_missing_parameter():
+    service = AssistantCoreService(MagicMock())
+    previous = AssistantPlan(
+        intent="create_employee",
+        domain="employees",
+        action="create",
+        requires_confirmation=True,
+        extracted_params={"name": "Joao Silva", "email": None, "setor": "ASM"},
+        missing_params=["email"],
+        permission_required="admin",
+    )
+    current = AssistantPlan(confidence=0.2)
+
+    plan = service._merge_pending_plan(previous, current, "o email e joao@empresa.com")
+
+    assert plan.extracted_params["name"] == "Joao Silva"
+    assert plan.extracted_params["email"] == "joao@empresa.com"
+    assert plan.missing_params == []
 
 
 def test_permission_denied_for_employee_create():

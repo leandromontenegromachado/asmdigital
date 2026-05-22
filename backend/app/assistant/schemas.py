@@ -46,6 +46,9 @@ class AssistantKnowledgeSearchRequest(BaseModel):
 
 
 class AssistantPlan(BaseModel):
+    message_type: str = "action_request"
+    should_execute: bool = True
+    answer_to_user: str | None = None
     intent: str = "unknown"
     domain: str = "general"
     action: str = "unknown"

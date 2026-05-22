@@ -24,13 +24,41 @@ class AssistantCoreService:
     def process_command(self, command: AssistantCommand, user: User | None = None) -> AssistantResponse:
         knowledge_context = self._knowledge_context(command.text)
         plan = interpret_command(command.text, self.db, knowledge_context=knowledge_context)
+
+        pending_input = self._pending_input_action(command, user)
+        if pending_input:
+            if not plan.should_execute:
+                response = self._response_from_non_executable_plan(command, plan, user)
+                self._log(command, response, plan, result=response.data)
+            elif self._should_continue_pending_input(command.text, pending_input):
+                response = self._continue_pending_input(command, pending_input, user)
+            else:
+                response = self._pending_input_reminder(command, pending_input)
+            if response:
+                return response
+
+        conversational_response = self._conversational_response(command, user) if self._is_greeting(self._normalize_text(command.text)) else None
+        if conversational_response:
+            plan = AssistantPlan(
+                intent=conversational_response.intent or "knowledge_answer",
+                domain=conversational_response.domain or "general",
+                action=conversational_response.action or "knowledge_answer",
+                confidence=0.95,
+            )
+            self._log(command, conversational_response, plan, result=conversational_response.data)
+            return conversational_response
+
         plan = self._apply_conversation_context(command, plan, user)
         plan = self._complete_plan(plan, command.text)
+        if not plan.should_execute:
+            response = self._response_from_non_executable_plan(command, plan, user)
+            self._log(command, response, plan, result=response.data)
+            return response
         knowledge_response = self._knowledge_response(command, plan, user)
         if knowledge_response:
             self._log(command, knowledge_response, plan, result=knowledge_response.data)
             return knowledge_response
-        if plan.intent == AssistantIntent.CREATE_MEETING.value:
+        if plan.intent == AssistantIntent.CREATE_MEETING.value or (plan.domain == "meetings" and plan.action in {"create", "schedule"}):
             response = AssistantResponse(
                 success=False,
                 intent=plan.intent,
@@ -73,21 +101,24 @@ class AssistantCoreService:
 
         preview = handler.preview(self.db, plan, user)
         if plan.missing_params:
+            action = self._create_pending_action(command, user, plan, preview, status="needs_input")
             response = AssistantResponse(
                 success=True,
                 intent=plan.intent,
                 domain=plan.domain,
                 action=plan.action,
-                message=f"{plan.summary_for_user} Ainda faltam dados: {', '.join(plan.missing_params)}.",
+                message=self._missing_input_message(plan),
                 requires_confirmation=plan.requires_confirmation,
+                confirmation_id=f"assistant_action:{action.id}",
                 preview=preview,
                 missing_params=plan.missing_params,
+                data={"action_id": action.id, "status": action.status},
             )
             self._log(command, response, plan)
             return response
 
         if plan.requires_confirmation:
-            action = self._create_pending_action(command, user, plan, preview)
+            action = self._create_pending_action(command, user, plan, preview, status="needs_confirmation")
             response = AssistantResponse(
                 success=True,
                 intent=plan.intent,
@@ -148,6 +179,19 @@ class AssistantCoreService:
             )
         payload = action.payload_json or {}
         plan = AssistantPlan(**(payload.get("plan") or {}))
+        if action.status == "needs_input" and plan.missing_params:
+            return AssistantResponse(
+                success=True,
+                intent=plan.intent,
+                domain=plan.domain,
+                action=plan.action,
+                message=self._missing_input_message(plan),
+                requires_confirmation=plan.requires_confirmation,
+                confirmation_id=f"assistant_action:{action.id}",
+                preview=payload.get("preview") or {},
+                missing_params=plan.missing_params,
+                data={"action_id": action.id, "status": action.status},
+            )
         if not can_execute(user, plan.domain, plan.action):
             return AssistantResponse(
                 success=False,
@@ -259,13 +303,14 @@ class AssistantCoreService:
         user: User | None,
         plan: AssistantPlan,
         preview: dict[str, Any],
+        status: str = "needs_confirmation",
     ) -> AssistantAction:
         conversation = self._conversation(command, user)
         action = AssistantAction(
             conversation_id=conversation.id,
             user_id=user.id if user else None,
             action_type=f"{plan.domain}.{plan.action}",
-            status="needs_confirmation",
+            status=status,
             payload_json={"plan": plan.model_dump(), "preview": preview, "original_text": command.text},
             result_json={},
         )
@@ -317,6 +362,214 @@ class AssistantCoreService:
             params.setdefault("text", text)
         return plan.model_copy(update={"extracted_params": params})
 
+    def _pending_input_action(self, command: AssistantCommand, user: User | None) -> AssistantAction | None:
+        if self._db_is_mock():
+            return None
+        conversation = self._conversation(command, user)
+        return (
+            self.db.query(AssistantAction)
+            .filter(AssistantAction.conversation_id == conversation.id, AssistantAction.status == "needs_input")
+            .order_by(AssistantAction.id.desc())
+            .first()
+        )
+
+    def _continue_pending_input(self, command: AssistantCommand, action: AssistantAction, user: User | None) -> AssistantResponse | None:
+        payload = action.payload_json or {}
+        plan_payload = payload.get("plan") if isinstance(payload.get("plan"), dict) else None
+        if not plan_payload:
+            return None
+        try:
+            previous_plan = AssistantPlan(**plan_payload)
+        except Exception:
+            return None
+
+        normalized = self._normalize_text(command.text)
+        if normalized in {"cancelar", "cancela", "nao", "não", "desiste"}:
+            action.status = "cancelled"
+            action.result_json = {"status": "cancelled"}
+            self.db.commit()
+            response = AssistantResponse(
+                success=True,
+                intent=previous_plan.intent,
+                domain=previous_plan.domain,
+                action=previous_plan.action,
+                message="Acao cancelada.",
+                data=action.result_json,
+            )
+            self._log(command, response, previous_plan, result=response.data)
+            return response
+
+        knowledge_context = self._knowledge_context(command.text)
+        current_plan = interpret_command(command.text, self.db, knowledge_context=knowledge_context)
+        updated_plan = self._merge_pending_plan(previous_plan, current_plan, command.text)
+        updated_plan = self._complete_plan(updated_plan, command.text)
+
+        if not can_execute(user, updated_plan.domain, updated_plan.action):
+            response = AssistantResponse(
+                success=False,
+                intent=updated_plan.intent,
+                domain=updated_plan.domain,
+                action=updated_plan.action,
+                message="Voce nao tem permissao para executar esta acao.",
+                errors=["permission_denied"],
+            )
+            self._log(command, response, updated_plan)
+            return response
+
+        handler = get_action_handler(updated_plan.domain)
+        if not handler:
+            return None
+
+        preview = handler.preview(self.db, updated_plan, user)
+        action.payload_json = {
+            **payload,
+            "plan": updated_plan.model_dump(),
+            "preview": preview,
+            "last_input_text": command.text,
+        }
+
+        if updated_plan.missing_params:
+            action.status = "needs_input"
+            self.db.commit()
+            response = AssistantResponse(
+                success=True,
+                intent=updated_plan.intent,
+                domain=updated_plan.domain,
+                action=updated_plan.action,
+                message=self._missing_input_message(updated_plan),
+                requires_confirmation=updated_plan.requires_confirmation,
+                confirmation_id=f"assistant_action:{action.id}",
+                preview=preview,
+                missing_params=updated_plan.missing_params,
+                data={"action_id": action.id, "status": action.status},
+            )
+            self._log(command, response, updated_plan)
+            return response
+
+        if updated_plan.requires_confirmation:
+            action.status = "needs_confirmation"
+            self.db.commit()
+            response = AssistantResponse(
+                success=True,
+                intent=updated_plan.intent,
+                domain=updated_plan.domain,
+                action=updated_plan.action,
+                message=f"Atualizei as informacoes. Revise a previa e confirme para executar.",
+                requires_confirmation=True,
+                confirmation_id=f"assistant_action:{action.id}",
+                preview=preview,
+                data={"action_id": action.id, "status": action.status},
+            )
+            self._log(command, response, updated_plan)
+            return response
+
+        result = handler.execute(self.db, updated_plan, user)
+        action.status = "completed" if result.success else "error"
+        action.result_json = jsonable_encoder({"status": action.status, **result.data, "errors": result.errors or []})
+        self.db.commit()
+        response = AssistantResponse(
+            success=result.success,
+            intent=updated_plan.intent,
+            domain=updated_plan.domain,
+            action=updated_plan.action,
+            message=result.message,
+            preview=preview,
+            data=result.data,
+            errors=result.errors or [],
+        )
+        self._log(command, response, updated_plan, result=result.data)
+        return response
+
+    def _merge_pending_plan(self, previous_plan: AssistantPlan, current_plan: AssistantPlan, text: str) -> AssistantPlan:
+        previous_params = dict(previous_plan.extracted_params or {})
+        current_params = dict(current_plan.extracted_params or {})
+        if current_plan.domain == previous_plan.domain and current_plan.action == previous_plan.action:
+            for key, value in current_params.items():
+                if self._has_value(value):
+                    previous_params[key] = value
+
+        updates = self._params_from_input_text(text, previous_plan.missing_params, previous_params)
+        previous_params.update(updates)
+        missing = [field for field in previous_plan.missing_params if not self._has_value(previous_params.get(field))]
+        return previous_plan.model_copy(update={"extracted_params": previous_params, "missing_params": missing})
+
+    def _params_from_input_text(self, text: str, missing_params: list[str], existing_params: dict[str, Any]) -> dict[str, Any]:
+        updates: dict[str, Any] = {}
+        normalized_missing = [str(field) for field in missing_params]
+        email_match = re.search(r"[\w.\-+]+@[\w.\-]+\.\w+", text)
+        if email_match and "email" in normalized_missing:
+            updates["email"] = email_match.group(0).lower()
+        int_match = re.search(r"\b(\d+)\b", text)
+        for field in normalized_missing:
+            lowered = field.lower()
+            field_pattern = re.search(rf"\b{re.escape(lowered)}\b\s*(?:e|eh|é|:|=|para)\s+(.+)$", text, flags=re.IGNORECASE)
+            if field_pattern:
+                updates[field] = field_pattern.group(1).strip(" .")
+                continue
+            if lowered in {"pending_item_id", "template_id", "id"} and int_match:
+                updates[field] = int(int_match.group(1))
+                continue
+            if lowered in {"comment", "comentario"}:
+                updates[field] = text.strip()
+                continue
+            if lowered in {"employee_name", "owner", "name", "title", "target", "channel", "source"} and not existing_params.get(field):
+                updates[field] = text.strip(" .")
+        if len(normalized_missing) == 1 and normalized_missing[0] not in updates:
+            field = normalized_missing[0]
+            if field == "email" and not email_match:
+                return updates
+            updates[field] = text.strip(" .")
+        return {key: value for key, value in updates.items() if self._has_value(value)}
+
+    def _missing_input_message(self, plan: AssistantPlan) -> str:
+        missing = ", ".join(plan.missing_params)
+        return (
+            f"{plan.summary_for_user} Ainda faltam dados: {missing}. "
+            "Envie uma nova mensagem com essas informacoes ou corrija algum campo. "
+            "Voce tambem pode responder 'cancelar'."
+        )
+
+    def _should_continue_pending_input(self, text: str, action: AssistantAction) -> bool:
+        normalized = self._normalize_text(text)
+        if self._is_greeting(normalized) or self._is_information_question(text):
+            return False
+        if normalized in {"cancelar", "cancela", "nao", "não", "desiste"}:
+            return True
+
+        payload = action.payload_json or {}
+        plan_payload = payload.get("plan") if isinstance(payload.get("plan"), dict) else {}
+        missing = [str(item) for item in plan_payload.get("missing_params") or []]
+
+        if self._looks_contextual(normalized):
+            return True
+        if any(field.lower() in normalized for field in missing):
+            return True
+        if "email" in missing and re.search(r"[\w.\-+]+@[\w.\-]+\.\w+", text):
+            return True
+        if any(field in {"pending_item_id", "template_id", "id"} for field in missing) and re.search(r"\b\d+\b", text):
+            return True
+        return bool(missing) and not normalized.startswith(
+            ("consegue", "pode", "vc pode", "vc consegue", "voce pode", "voce consegue", "você pode", "você consegue", "como ", "o que ")
+        )
+
+    def _pending_input_reminder(self, command: AssistantCommand, action: AssistantAction) -> AssistantResponse:
+        payload = action.payload_json or {}
+        plan = AssistantPlan(**(payload.get("plan") or {}))
+        response = AssistantResponse(
+            success=True,
+            intent=plan.intent,
+            domain=plan.domain,
+            action=plan.action,
+            message=self._missing_input_message(plan),
+            requires_confirmation=plan.requires_confirmation,
+            confirmation_id=f"assistant_action:{action.id}",
+            preview=payload.get("preview") or {},
+            missing_params=plan.missing_params,
+            data={"action_id": action.id, "status": action.status},
+        )
+        self._log(command, response, plan)
+        return response
+
     def _knowledge_context(self, text: str) -> str:
         if self._db_is_mock():
             return ""
@@ -324,6 +577,186 @@ class AssistantCoreService:
             return AssistantKnowledgeService(self.db).context_for_prompt(text, limit=5)
         except Exception:
             return ""
+
+    def _response_from_non_executable_plan(self, command: AssistantCommand, plan: AssistantPlan, user: User | None) -> AssistantResponse:
+        message = (plan.answer_to_user or "").strip()
+        data: dict[str, Any] = {"message_type": plan.message_type}
+        if plan.action == "capabilities":
+            labels = ", ".join(item["label"] for item in CAPABILITIES)
+            if message:
+                message = f"{message}\n\nAreas que conheco: {labels}."
+            else:
+                message = f"Posso operar estas areas: {labels}."
+            data["capabilities"] = CAPABILITIES
+        if not message and not self._db_is_mock():
+            try:
+                answer = AssistantKnowledgeService(self.db).answer_question(command.text, user=user)
+            except Exception:
+                answer = None
+            if answer:
+                message, knowledge_data = answer
+                data.update(knowledge_data)
+        if not message:
+            message = "Posso responder duvidas sobre o ASM Digital ou preparar acoes quando voce pedir uma execucao especifica."
+        return AssistantResponse(
+            success=True,
+            intent=plan.intent,
+            domain=plan.domain,
+            action=plan.action if plan.action != "unknown" else "answer",
+            message=message,
+            data=data,
+        )
+
+    def _conversational_response(self, command: AssistantCommand, user: User | None) -> AssistantResponse | None:
+        normalized = self._normalize_text(command.text)
+        if self._is_greeting(normalized):
+            name = (getattr(user, "name", None) or command.user_name or "").strip()
+            greeting = f"Ola, {name}." if name else "Ola."
+            return AssistantResponse(
+                success=True,
+                intent="greeting",
+                domain="general",
+                action="answer",
+                message=(
+                    f"{greeting} Posso responder duvidas sobre o ASM Digital ou operar funcionalidades do sistema. "
+                    "Quando uma acao alterar dados, eu mostro a previa e peco confirmacao antes de executar."
+                ),
+            )
+
+        if not self._is_information_question(command.text):
+            return None
+
+        capability = self._capability_question_answer(normalized)
+        if capability:
+            return AssistantResponse(
+                success=True,
+                intent="capability_question",
+                domain="general",
+                action="answer",
+                message=capability,
+                data={"source": "capability_router"},
+            )
+
+        if self._db_is_mock():
+            return AssistantResponse(
+                success=True,
+                intent="knowledge_answer",
+                domain="general",
+                action="answer",
+                message="Posso explicar o funcionamento do ASM Digital e orientar o uso das telas. Para executar acoes, descreva a acao desejada.",
+            )
+
+        try:
+            answer = AssistantKnowledgeService(self.db).answer_question(command.text, user=user)
+        except Exception:
+            answer = None
+        if not answer:
+            return AssistantResponse(
+                success=True,
+                intent="knowledge_answer",
+                domain="general",
+                action="answer",
+                message="Posso ajudar com duvidas sobre o ASM Digital. Pergunte sobre uma tela, modulo ou funcionalidade, ou peca uma acao especifica para eu preparar.",
+            )
+        message, data = answer
+        return AssistantResponse(
+            success=True,
+            intent="knowledge_answer",
+            domain="general",
+            action="answer",
+            message=message,
+            data=data,
+        )
+
+    def _is_greeting(self, normalized_text: str) -> bool:
+        greetings = {
+            "oi",
+            "ola",
+            "olá",
+            "bom dia",
+            "boa tarde",
+            "boa noite",
+            "tudo bem",
+            "bom dia tudo bem",
+            "boa tarde tudo bem",
+            "boa noite tudo bem",
+        }
+        return normalized_text.strip(" ?!.") in greetings
+
+    def _is_information_question(self, text: str) -> bool:
+        normalized = self._normalize_text(text)
+        if not normalized:
+            return False
+        direct_request_markers = (
+            "me liste",
+            "me listar",
+            "me mostra",
+            "me mostrar",
+            "me traga",
+            "me trazer",
+            "me diga",
+            "me dizer",
+            "para mim",
+            "pra mim",
+        )
+        if any(marker in normalized for marker in direct_request_markers):
+            return False
+        how_to_markers = (
+            "como faco",
+            "como faço",
+            "como usar",
+            "como funciona",
+            "o que e",
+            "o que é",
+            "para que serve",
+            "qual a finalidade",
+        )
+        if any(re.search(rf"\b{re.escape(marker)}\b", normalized) for marker in how_to_markers):
+            return True
+        capability_markers = (
+            "consegue",
+            "vc consegue",
+            "voce consegue",
+            "você consegue",
+            "pode",
+            "vc pode",
+            "voce pode",
+            "você pode",
+            "sabe",
+            "da para",
+            "dá para",
+            "e possivel",
+            "é possivel",
+            "é possível",
+        )
+        return normalized.startswith(capability_markers)
+
+    def _capability_question_answer(self, normalized_text: str) -> str | None:
+        if any(word in normalized_text for word in ("agendar", "agenda", "reuniao", "reunião", "marcar")):
+            return (
+                "Sim, posso ajudar com agendamento de reunioes. "
+                "Como voce fez uma pergunta, nao vou criar nada agora. "
+                "Quando quiser iniciar o agendamento, diga algo como: "
+                "\"Agende uma reuniao amanha as 10h com Maria sobre demandas atrasadas\". "
+                "Se faltarem titulo, data ou participantes, eu vou perguntar; antes de criar, eu mostro a previa e peco confirmacao."
+            )
+        if any(word in normalized_text for word in ("notificacao", "notificacoes", "notificar", "aviso")):
+            return (
+                "Sim, posso preparar notificacoes. Envios alteram dados ou disparam comunicacao, entao eu sempre mostro a previa e peco confirmacao antes de enviar."
+            )
+        if any(word in normalized_text for word in ("rotina", "rotinas")):
+            return (
+                "Sim, posso consultar rotinas e preparar criacao ou alteracao de rotinas. Consultas respondem direto; criacao, edicao, exclusao ou execucao com impacto exigem confirmacao."
+            )
+        if any(word in normalized_text for word in ("relatorio", "relatorios", "redmine", "demandas")):
+            return (
+                "Sim, posso consultar relatorios e preparar execucoes de relatorios Redmine ou IA. Consultas simples podem responder direto; uma nova execucao de relatorio pede confirmacao."
+            )
+        if any(word in normalized_text for word in ("avaliacao 360", "avaliação 360", "360")):
+            return (
+                "Sim, posso consultar Avaliacao 360 por funcionario, incluindo ciclo, notas, feedbacks, resumo de IA e alertas quando existirem dados cadastrados."
+            )
+        return None
 
     def _knowledge_response(self, command: AssistantCommand, plan: AssistantPlan, user: User | None) -> AssistantResponse | None:
         if self._db_is_mock():
