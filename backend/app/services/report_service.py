@@ -283,6 +283,72 @@ def _merge_values_with_source(
     return result
 
 
+def _configured_project_ids(connector: Connector) -> list[str]:
+    raw_projects = (connector.config_json or {}).get("project_ids")
+    if not isinstance(raw_projects, list):
+        return []
+    return [str(item).strip().lower() for item in raw_projects if str(item).strip()]
+
+
+def _connector_scoped_project_ids(connector: Connector, requested_project_ids: list[str]) -> list[str]:
+    connector_projects = _configured_project_ids(connector)
+    requested = [str(item).strip().lower() for item in requested_project_ids or [] if str(item).strip()]
+    if not connector_projects:
+        return requested
+    if not requested:
+        return connector_projects
+    allowed = set(connector_projects)
+    scoped = [project_id for project_id in requested if project_id in allowed]
+    return scoped or connector_projects
+
+
+def _normalize_project_scope_value(value: Any) -> str:
+    normalized = unicodedata.normalize("NFKD", str(value or ""))
+    normalized = "".join(char for char in normalized if not unicodedata.combining(char))
+    return re.sub(r"[^a-zA-Z0-9]+", "", normalized).casefold()
+
+
+def _project_scope_tokens(value: Any) -> list[str]:
+    normalized = unicodedata.normalize("NFKD", str(value or ""))
+    normalized = "".join(char for char in normalized if not unicodedata.combining(char))
+    return [token.casefold() for token in re.split(r"[^a-zA-Z0-9]+", normalized) if token]
+
+
+def _project_scope_matches(expected: Any, candidate: Any) -> bool:
+    expected_compact = _normalize_project_scope_value(expected)
+    candidate_compact = _normalize_project_scope_value(candidate)
+    if not expected_compact or not candidate_compact:
+        return False
+    if expected_compact == candidate_compact:
+        return True
+
+    expected_tokens = _project_scope_tokens(expected)
+    candidate_tokens = _project_scope_tokens(candidate)
+    if len(expected_tokens) != len(candidate_tokens):
+        return False
+    return all(
+        left == right
+        or (len(left) >= 3 and right.startswith(left))
+        or (len(right) >= 3 and left.startswith(right))
+        for left, right in zip(expected_tokens, candidate_tokens)
+    )
+
+
+def _issue_matches_project_scope(issue: dict[str, Any], project_id: str | None) -> bool:
+    if not project_id:
+        return True
+    project = issue.get("project")
+    if not isinstance(project, dict):
+        return _project_scope_matches(project_id, project)
+
+    candidates = [
+        project.get("id"),
+        project.get("identifier"),
+        project.get("name"),
+    ]
+    return any(_project_scope_matches(project_id, item) for item in candidates if item not in (None, ""))
+
+
 def generate_redmine_report(
     db: Session,
     connector: Connector,
@@ -304,6 +370,7 @@ def generate_redmine_report(
 
     adapter = RedmineAdapter(base_url=base_url, api_key=api_key)
     prompt_options = dict(prompt_options or {})
+    project_ids = _connector_scoped_project_ids(connector, project_ids)
     saved_query_columns = _load_saved_query_columns(adapter, project_ids, query_id) if query_id else []
     if saved_query_columns and not prompt_options.get("columns"):
         prompt_options["columns"] = saved_query_columns
@@ -336,7 +403,7 @@ def generate_redmine_report(
     target_projects = project_ids or [None]
     for project_id in target_projects:
         try:
-            issues = list(adapter.fetch_issues(
+            redmine_issues = list(adapter.fetch_issues(
                 project_id,
                 start_date,
                 end_date,
@@ -344,6 +411,7 @@ def generate_redmine_report(
                 query_id=query_id,
                 apply_date_filter=not ignore_date_filter,
             ))
+            issues = [issue for issue in redmine_issues if _issue_matches_project_scope(issue, project_id)]
             project_rows = _issues_to_report_rows(
                 report_id=report.id,
                 issues=issues,
@@ -358,7 +426,8 @@ def generate_redmine_report(
                     "project_id": project_id,
                     "query_id": query_id,
                     "source": "saved_query" if query_id else "direct_filters",
-                    "redmine_issues": len(issues),
+                    "redmine_issues": len(redmine_issues),
+                    "rows_after_project_scope": len(issues),
                     "rows_after_prompt_filters": len(project_rows),
                 }
             )
@@ -370,7 +439,7 @@ def generate_redmine_report(
                 and prompt_options
                 and prompt_options.get("overdue_only")
             ):
-                fallback_issues = list(adapter.fetch_issues(
+                redmine_fallback_issues = list(adapter.fetch_issues(
                     project_id,
                     start_date,
                     end_date,
@@ -378,6 +447,9 @@ def generate_redmine_report(
                     query_id=None,
                     apply_date_filter=False,
                 ))
+                fallback_issues = [
+                    issue for issue in redmine_fallback_issues if _issue_matches_project_scope(issue, project_id)
+                ]
                 fallback_rows = _issues_to_report_rows(
                     report_id=report.id,
                     issues=fallback_issues,
@@ -385,7 +457,7 @@ def generate_redmine_report(
                     mapping_rules=mapping_rules,
                     normalization_rules=normalization_rules,
                     regex_rules=regex_rules,
-                prompt_options=prompt_options,
+                    prompt_options=prompt_options,
                 )
                 diagnostics.append(
                     {
@@ -393,7 +465,8 @@ def generate_redmine_report(
                         "query_id": None,
                         "source": "direct_filters_fallback",
                         "reason": "saved_query_returned_no_rows_after_prompt_filters",
-                        "redmine_issues": len(fallback_issues),
+                        "redmine_issues": len(redmine_fallback_issues),
+                        "rows_after_project_scope": len(fallback_issues),
                         "rows_after_prompt_filters": len(fallback_rows),
                     }
                 )

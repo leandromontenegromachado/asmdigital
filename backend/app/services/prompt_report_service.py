@@ -495,6 +495,35 @@ def _append_prompt_filters(prompt_options: dict[str, Any], filters: list[dict[st
     return {**prompt_options, "prompt_filters": existing}
 
 
+def _append_excluded_field_values(prompt_options: dict[str, Any], rules: list[dict[str, Any]]) -> dict[str, Any]:
+    if not rules:
+        return prompt_options
+    prompt_options = _append_prompt_filters(prompt_options, rules)
+    existing = list(prompt_options.get("exclude_field_values") or [])
+    seen = {
+        (
+            str(item.get("field")),
+            str(item.get("operator")),
+            tuple(str(value) for value in item.get("values", []) if value is not None)
+            if isinstance(item.get("values"), list)
+            else (str(item.get("value")),),
+        )
+        for item in existing
+        if isinstance(item, dict)
+    }
+    for item in rules:
+        values = item.get("values") if isinstance(item.get("values"), list) else [item.get("value")]
+        key = (
+            str(item.get("field")),
+            str(item.get("operator")),
+            tuple(str(value) for value in values if value is not None),
+        )
+        if key not in seen:
+            existing.append(item)
+            seen.add(key)
+    return {**prompt_options, "exclude_field_values": existing}
+
+
 def _prompt_fingerprint(prompt: str) -> str:
     normalized = re.sub(r"\s+", " ", (prompt or "").strip())
     return hashlib.sha256(normalized.encode("utf-8")).hexdigest()
@@ -925,14 +954,7 @@ def _parse_prompt_filters(
 
     excluded_field_values = _parse_excluded_field_values(prompt)
     if excluded_field_values:
-        output["prompt_options"] = {
-            **output["prompt_options"],
-            "exclude_field_values": excluded_field_values,
-            "prompt_filters": [
-                *(output["prompt_options"].get("prompt_filters") or []),
-                *excluded_field_values,
-            ],
-        }
+        output["prompt_options"] = _append_excluded_field_values(output["prompt_options"], excluded_field_values)
         excluded_status_names = [
             value
             for rule in excluded_field_values
@@ -979,6 +1001,19 @@ def _parse_prompt_filters(
             output = _apply_prompt_plan(output, plan)
             if deterministic_status_id and plan.get("status_id") is None:
                 output["status_id"] = deterministic_status_id
+            if excluded_field_values:
+                output["prompt_options"] = _append_excluded_field_values(output["prompt_options"], excluded_field_values)
+                excluded_status_names = [
+                    value
+                    for rule in excluded_field_values
+                    if rule.get("field") == "status"
+                    for value in rule.get("values", [])
+                ]
+                if excluded_status_names:
+                    output["prompt_options"] = {
+                        **output["prompt_options"],
+                        "exclude_status_names": excluded_status_names,
+                    }
             if deterministic_filters:
                 output["prompt_options"] = _append_prompt_filters(output["prompt_options"], deterministic_filters)
             if assignee_filters:
@@ -1013,6 +1048,19 @@ def _parse_prompt_filters(
                 "interpreter_source": cached_options.get("interpreter", "gemini"),
                 "interpreter_error": str(exc),
             }
+            if excluded_field_values:
+                output["prompt_options"] = _append_excluded_field_values(output["prompt_options"], excluded_field_values)
+                excluded_status_names = [
+                    value
+                    for rule in excluded_field_values
+                    if rule.get("field") == "status"
+                    for value in rule.get("values", [])
+                ]
+                if excluded_status_names:
+                    output["prompt_options"] = {
+                        **output["prompt_options"],
+                        "exclude_status_names": excluded_status_names,
+                    }
             if deterministic_filters:
                 output["prompt_options"] = _append_prompt_filters(output["prompt_options"], deterministic_filters)
             if assignee_filters:
@@ -1047,6 +1095,28 @@ def _parse_prompt_filters(
                     "interpreter": "cached",
                     "interpreter_source": cached_options.get("interpreter", "gemini"),
                 }
+                if excluded_field_values:
+                    output["prompt_options"] = _append_excluded_field_values(output["prompt_options"], excluded_field_values)
+                    excluded_status_names = [
+                        value
+                        for rule in excluded_field_values
+                        if rule.get("field") == "status"
+                        for value in rule.get("values", [])
+                    ]
+                    if excluded_status_names:
+                        output["prompt_options"] = {
+                            **output["prompt_options"],
+                            "exclude_status_names": excluded_status_names,
+                        }
+                if deterministic_filters:
+                    output["prompt_options"] = _append_prompt_filters(output["prompt_options"], deterministic_filters)
+                if assignee_filters:
+                    output["prompt_options"] = _append_prompt_filters(output["prompt_options"], assignee_filters)
+                if deterministic_sort:
+                    output["prompt_options"] = {
+                        **output["prompt_options"],
+                        "sort": deterministic_sort,
+                    }
             else:
                 raise PromptInterpretationError(
                     "Nao ha IA de interpretacao configurada/disponivel para este prompt complexo. "

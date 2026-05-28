@@ -1,6 +1,13 @@
 from datetime import date, timedelta
 
-from app.services.prompt_report_service import _apply_prompt_plan, _normalize_prompt_plan, _parse_prompt_filters
+import pytest
+
+from app.services.prompt_report_service import (
+    PromptInterpretationError,
+    _apply_prompt_plan,
+    _normalize_prompt_plan,
+    _parse_prompt_filters,
+)
 from app.services.report_service import _is_rejected_by_prompt_filters
 
 
@@ -54,7 +61,7 @@ def test_prompt_filters_compare_dates_against_today():
     assert _is_rejected_by_prompt_filters({"due_date": tomorrow}, rules)
 
 
-def test_fallback_parser_understands_do_not_bring_status_phrase(monkeypatch):
+def test_complex_status_exclusion_requires_ai_when_no_cache(monkeypatch):
     monkeypatch.setattr("app.services.prompt_report_service.settings.fala_ai_gemini_api_key", None)
     prompt = (
         "Quero um relatorio que liste demandas em atraso, adicionar dias em atraso "
@@ -63,16 +70,16 @@ def test_fallback_parser_understands_do_not_bring_status_phrase(monkeypatch):
 
     monkeypatch.setattr("app.services.prompt_report_service._call_prompt_interpreter_ai", lambda *args, **kwargs: None)
 
-    options = _parse_prompt_filters(None, prompt, {})["prompt_options"]
+    with pytest.raises(PromptInterpretationError):
+        _parse_prompt_filters(None, prompt, {})
 
-    assert {"field": "status", "operator": "neq", "values": ["homologada", "homologacao"]} in options["exclude_field_values"]
     assert _is_rejected_by_prompt_filters(
         {"status": "Homologacao"},
         [{"field": "status", "operator": "not_in", "values": ["homologada", "homologacao"]}],
     )
 
 
-def test_fallback_parser_understands_empty_due_date_and_old_update(monkeypatch):
+def test_complex_date_prompt_requires_ai_when_no_cache(monkeypatch):
     monkeypatch.setattr("app.services.prompt_report_service.settings.fala_ai_gemini_api_key", None)
     monkeypatch.setattr("app.services.prompt_report_service._call_prompt_interpreter_ai", lambda *args, **kwargs: None)
     prompt = (
@@ -80,14 +87,8 @@ def test_fallback_parser_understands_empty_due_date_and_old_update(monkeypatch):
         "e data de atualizacao com mais de 8 dias da data de hoje. Ordene pelo responsavel."
     )
 
-    options = _parse_prompt_filters(None, prompt, {"project_ids": ["asm-dem"]})["prompt_options"]
-
-    assert {"field": "due_date", "operator": "is_empty"} in options["prompt_filters"]
-    assert any(
-        item.get("field") == "updated_on" and item.get("operator") == "lt" and item.get("value")
-        for item in options["prompt_filters"]
-    )
-    assert options["sort"] == [{"field": "assigned_to", "direction": "asc"}]
+    with pytest.raises(PromptInterpretationError):
+        _parse_prompt_filters(None, prompt, {"project_ids": ["asm-dem"]})
 
 
 def test_objective_status_signal_survives_generic_scope_and_ai_null_status(monkeypatch):
@@ -117,3 +118,31 @@ Quero um relatorio que liste as demandas em execucao que estao com o campo data 
 
     assert filters["status_id"] == "open"
     assert {"field": "due_date", "operator": "is_empty", "values": []} in filters["prompt_options"]["prompt_filters"]
+
+
+def test_ai_interpreter_keeps_explicit_local_exclusion_guards(monkeypatch):
+    prompt = (
+        "Quero um relatório que liste as demandas que estão com data de atualização com mais de 7 dias de hoje. "
+        "Este relatório deve ter os campos título da demanda, situação, atribuído para, data prevista e alterado em, nesta ordem. "
+        "Não trazer as demanda que estão com status homologada ou homologação ou pendente cliente."
+    )
+
+    monkeypatch.setattr(
+        "app.services.prompt_report_service._call_prompt_interpreter_ai",
+        lambda *args, **kwargs: (
+            {
+                "project_ids": ["asm-dem"],
+                "status_id": None,
+                "columns": ["subject", "status", "assigned_to", "due_date", "updated_on"],
+                "filters": [{"field": "updated_on", "operator": "lt", "value": "2026-05-21"}],
+            },
+            "test-model",
+        ),
+    )
+
+    filters = _parse_prompt_filters(None, prompt, {"project_ids": ["asm-dem"]})
+    options = filters["prompt_options"]
+
+    assert options["interpreter"] == "gemini"
+    assert {"field": "status", "operator": "not_in", "values": ["homologada", "homologacao", "pendente cliente"]} in options["prompt_filters"]
+    assert {"field": "status", "operator": "not_in", "values": ["homologada", "homologacao", "pendente cliente"]} in options["exclude_field_values"]
