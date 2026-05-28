@@ -898,4 +898,5 @@ def build_preview_tickets(
 def _issue_url(base_url: str | None, issue_id: Any) -> str | None:
     if not base_url or not issue_id:
         return None
-    return f"{base_url.rstrip('/')}/issues/{issue_id}"
+    root_url = re.sub(r"/projects/[^/]+/?$", "", str(base_url).rstrip("/"), flags=re.IGNORECASE)
+    return f"{root_url}/issues/{issue_id}"

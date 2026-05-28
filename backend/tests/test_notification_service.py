@@ -7,6 +7,7 @@ from app.services.notification_service import (
     _employee_by_name,
     _employee_from_item,
     _item_from_notification,
+    _item_from_report_row,
     _report_template_variables,
     _normalize_lookup_text,
     _resolve_recipients,
@@ -40,6 +41,34 @@ def test_report_template_variables_expose_redmine_link_aliases():
     assert variables["link_demanda"] == "https://redmine.example.com/issues/123"
     assert variables["link_redmine"] == "https://redmine.example.com/issues/123"
     assert "/reports/redmine-deliveries?report_id=203" in variables["link_relatorio"]
+
+
+def test_report_row_item_canonicalizes_project_scoped_redmine_issue_url():
+    report = Report(id=203, type="redmine-deliveries", params_json={"connector_id": 1})
+    row = ReportRow(
+        id=10,
+        report_id=203,
+        source_ref="329325",
+        source_url="https://redmine.intra.rs.gov.br/projects/asm-dem/issues/329325",
+        raw_json={"assigned_to": "Maria Silva"},
+    )
+    connector = type("ConnectorObj", (), {"config_json": {"base_url": "https://redmine.intra.rs.gov.br/projects/asm-dem"}})()
+
+    class Query:
+        def filter(self, *_args, **_kwargs):
+            return self
+
+        def first(self):
+            return connector
+
+    class FakeDb:
+        def query(self, *_args, **_kwargs):
+            return Query()
+
+    item = _item_from_report_row(FakeDb(), report, row)
+
+    assert item["link_demanda"] == "https://redmine.intra.rs.gov.br/issues/329325"
+    assert item["link_redmine"] == "https://redmine.intra.rs.gov.br/issues/329325"
 
 
 def test_employee_lookup_matches_double_spaces_from_report():

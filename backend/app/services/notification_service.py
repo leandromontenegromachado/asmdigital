@@ -891,7 +891,7 @@ def _item_from_report_row(db: Session, report: Report, row: ReportRow) -> dict[s
     project_ids = params.get("project_ids") if isinstance(params.get("project_ids"), list) else []
     project_id = project_ids[0] if project_ids else params.get("project_id")
     raw = row.raw_json if isinstance(row.raw_json, dict) else {}
-    demand_url = row.source_url or _redmine_issue_url(redmine_base_url, row.source_ref)
+    demand_url = _redmine_issue_url(redmine_base_url, row.source_ref) or _canonical_redmine_issue_url(row.source_url, row.source_ref)
     return {
         **raw,
         "row_id": row.id,
@@ -1115,7 +1115,22 @@ def _template_variables(automation: Automation, run: AutomationRun | None, emplo
 def _redmine_issue_url(base_url: str | None, issue_id: Any) -> str | None:
     if not base_url or not issue_id:
         return None
-    return f"{str(base_url).rstrip('/')}/issues/{issue_id}"
+    root_url = re.sub(r"/projects/[^/]+/?$", "", str(base_url).rstrip("/"), flags=re.IGNORECASE)
+    return f"{root_url}/issues/{issue_id}"
+
+
+def _canonical_redmine_issue_url(url: str | None, issue_id: Any = None) -> str | None:
+    if not url:
+        return None
+    text = str(url).strip()
+    match = re.match(r"^(?P<root>https?://[^/]+)(?:/projects/[^/]+)?/issues/(?P<id>\d+)(?:[/?#].*)?$", text, flags=re.IGNORECASE)
+    if match:
+        return f"{match.group('root')}/issues/{match.group('id')}"
+    if issue_id:
+        root_match = re.match(r"^(?P<root>https?://[^/]+)", text, flags=re.IGNORECASE)
+        if root_match:
+            return f"{root_match.group('root')}/issues/{issue_id}"
+    return text
 
 
 def _project_name_from_subject(subject: Any) -> str | None:

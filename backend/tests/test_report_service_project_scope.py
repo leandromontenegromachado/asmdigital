@@ -1,5 +1,5 @@
 from app.models import Connector
-from app.services.report_service import _connector_scoped_project_ids, _issue_matches_project_scope, _issue_report_metadata
+from app.services.report_service import _connector_scoped_project_ids, _issue_matches_project_scope, _issue_report_metadata, _issue_url
 
 
 def test_connector_project_scope_falls_back_to_configured_project():
@@ -38,3 +38,7 @@ def test_issue_metadata_calculates_days_since_update(monkeypatch):
     metadata = _issue_report_metadata({"id": 1, "updated_on": "2026-05-20T10:00:00Z"})
 
     assert metadata["days_since_update"] == 8
+
+
+def test_issue_url_uses_redmine_root_when_base_url_is_project_scoped():
+    assert _issue_url("https://redmine.intra.rs.gov.br/projects/asm-dem", 329325) == "https://redmine.intra.rs.gov.br/issues/329325"
