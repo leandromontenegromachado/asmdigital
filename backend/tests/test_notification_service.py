@@ -7,6 +7,7 @@ from app.services.notification_service import (
     _employee_by_name,
     _employee_from_item,
     _item_from_notification,
+    _report_template_variables,
     _normalize_lookup_text,
     _resolve_recipients,
     retry_notification,
@@ -23,6 +24,22 @@ def test_render_template_replaces_known_variables():
     assert "Maria" in output
     assert "Portal" in output
     assert "{{" not in output
+
+
+def test_report_template_variables_expose_redmine_link_aliases():
+    employee = Employee(id=1, name="Maria Silva", email="maria@example.com")
+    report = Report(id=203, type="redmine-deliveries")
+    item = {
+        "subject": "Demanda teste",
+        "assigned_to": "Maria Silva",
+        "source_url": "https://redmine.example.com/issues/123",
+    }
+
+    variables = _report_template_variables(report, employee, item)
+
+    assert variables["link_demanda"] == "https://redmine.example.com/issues/123"
+    assert variables["link_redmine"] == "https://redmine.example.com/issues/123"
+    assert "/reports/redmine-deliveries?report_id=203" in variables["link_relatorio"]
 
 
 def test_employee_lookup_matches_double_spaces_from_report():
