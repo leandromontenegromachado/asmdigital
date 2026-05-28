@@ -64,6 +64,7 @@ REDMINE_COLUMN_LABELS = {
     "category": "Categoria",
     "fixed_version": "Versao",
     "days_overdue": "Dias em atraso",
+    "days_since_update": "Dias sem atualização",
 }
 
 REDMINE_COLUMN_ALIASES = {
@@ -83,6 +84,8 @@ REDMINE_COLUMN_ALIASES = {
     "previsto": "due_date",
     "alterado_em": "updated_on",
     "atualizado_em": "updated_on",
+    "dias_sem_atualizacao": "days_since_update",
+    "dias_sem_alteracao": "days_since_update",
     "criado_em": "created_on",
     "data_inicio": "start_date",
     "inicio": "start_date",
@@ -738,7 +741,9 @@ def _is_overdue(issue: dict[str, Any]) -> bool:
 
 def _issue_report_metadata(issue: dict[str, Any]) -> dict[str, Any]:
     due_date = _parse_redmine_date(issue.get("due_date"))
+    updated_on = _parse_redmine_date(issue.get("updated_on"))
     days_overdue = (date.today() - due_date).days if due_date and due_date < date.today() else 0
+    days_since_update = (date.today() - updated_on).days if updated_on else None
     metadata = {
         "source_ref": str(issue.get("id")) if issue.get("id") else None,
         "id": str(issue.get("id")) if issue.get("id") else None,
@@ -760,6 +765,7 @@ def _issue_report_metadata(issue: dict[str, Any]) -> dict[str, Any]:
         "fixed_version": _nested_name(issue, "fixed_version"),
         "is_overdue": _is_overdue(issue),
         "days_overdue": days_overdue,
+        "days_since_update": days_since_update,
     }
     for custom_field in issue.get("custom_fields") or []:
         if not isinstance(custom_field, dict):

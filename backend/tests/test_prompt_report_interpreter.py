@@ -146,3 +146,56 @@ def test_ai_interpreter_keeps_explicit_local_exclusion_guards(monkeypatch):
     assert options["interpreter"] == "gemini"
     assert {"field": "status", "operator": "not_in", "values": ["homologada", "homologacao", "pendente cliente"]} in options["prompt_filters"]
     assert {"field": "status", "operator": "not_in", "values": ["homologada", "homologacao", "pendente cliente"]} in options["exclude_field_values"]
+
+
+def test_ai_interpreter_supports_days_since_update_column(monkeypatch):
+    prompt = (
+        "Quero um relatorio que liste demandas com data de atualizacao com mais de 7 dias. "
+        "Adicionar uma coluna dias sem atualizacao."
+    )
+
+    monkeypatch.setattr(
+        "app.services.prompt_report_service._call_prompt_interpreter_ai",
+        lambda *args, **kwargs: (
+            {
+                "project_ids": ["asm-dem"],
+                "columns": ["subject", "status", "assigned_to", "due_date", "updated_on", "days_since_update"],
+                "filters": [{"field": "updated_on", "operator": "lt", "value": "2026-05-21"}],
+            },
+            "test-model",
+        ),
+    )
+
+    filters = _parse_prompt_filters(None, prompt, {"project_ids": ["asm-dem"]})
+    columns = filters["prompt_options"]["columns"]
+
+    assert [column["key"] for column in columns] == [
+        "subject",
+        "status",
+        "assigned_to",
+        "due_date",
+        "updated_on",
+        "days_since_update",
+    ]
+    assert columns[-1]["label"] == "Dias sem atualização"
+
+
+def test_explicit_days_since_update_prompt_does_not_become_days_overdue(monkeypatch):
+    prompt = "Adicionar uma coluna dias sem atualizacao."
+
+    monkeypatch.setattr(
+        "app.services.prompt_report_service._call_prompt_interpreter_ai",
+        lambda *args, **kwargs: (
+            {
+                "project_ids": ["asm-dem"],
+                "columns": ["subject", "days_overdue"],
+            },
+            "test-model",
+        ),
+    )
+
+    filters = _parse_prompt_filters(None, prompt, {"project_ids": ["asm-dem"]})
+    column_keys = [column["key"] for column in filters["prompt_options"]["columns"]]
+
+    assert "days_since_update" in column_keys
+    assert "days_overdue" not in column_keys

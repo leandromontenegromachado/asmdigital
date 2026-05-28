@@ -111,6 +111,7 @@ PROMPT_COLUMN_CANDIDATES = [
     ("assigned_to", "Atribuido para", ("atribuido", "atribuído", "responsavel", "responsável")),
     ("due_date", "Data prevista", ("data prevista", "prevista", "vencimento")),
     ("days_overdue", "Dias em atraso", ("dias em atraso", "dias atraso", "dias vencido", "dias vencidos")),
+    ("days_since_update", "Dias sem atualização", ("dias sem atualizacao", "dias sem atualização", "dias sem alterar", "dias sem alteracao", "dias sem alteração")),
     ("updated_on", "Alterado em", ("alterado", "atualizado", "modificado")),
     ("status", "Status", ("status", "situacao", "situação")),
     ("priority", "Prioridade", ("prioridade",)),
@@ -158,6 +159,7 @@ def _prompt_columns(prompt: str) -> list[dict[str, str]]:
         ("assigned_to", "Atribuido para", ("atribuido", "atribuído", "responsavel", "responsável")),
         ("due_date", "Data prevista", ("data prevista", "prevista", "vencimento")),
         ("days_overdue", "Dias em atraso", ("dias em atraso", "dias atraso", "dias vencido", "dias vencidos")),
+        ("days_since_update", "Dias sem atualização", ("dias sem atualizacao", "dias sem atualização", "dias sem alterar", "dias sem alteracao", "dias sem alteração")),
         ("updated_on", "Alterado em", ("alterado", "atualizado", "modificado")),
         ("status", "Status", ("status", "situacao", "situação")),
         ("priority", "Prioridade", ("prioridade",)),
@@ -244,6 +246,7 @@ def _field_from_prompt_label(value: str) -> str | None:
         "assigned_to": ("atribuido", "atribuído", "atribuido para", "responsavel", "responsável"),
         "due_date": ("data prevista", "prevista", "vencimento"),
         "days_overdue": ("dias em atraso", "dias atraso", "dias vencido", "dias vencidos"),
+        "days_since_update": ("dias sem atualizacao", "dias sem atualização", "dias sem alterar", "dias sem alteracao", "dias sem alteração"),
         "updated_on": ("alterado", "atualizado", "modificado"),
         "status": ("status", "situacao", "situação"),
         "priority": ("prioridade",),
@@ -427,6 +430,37 @@ def _parse_prompt_sort(prompt: str) -> list[dict[str, str]]:
     if re.search(r"orden[ea]?\s+(?:pelo|por|pela)?\s*(?:alterad[ao]|atualizad[ao])", normalized):
         return [{"field": "updated_on", "direction": "desc"}]
     return []
+
+
+def _prompt_requests_days_since_update(prompt: str) -> bool:
+    normalized = _normalize_prompt_text(prompt)
+    return bool(re.search(r"dias?\s+sem\s+(?:atualizacao|alteracao|alterar|atualizar)", normalized))
+
+
+def _apply_explicit_column_guards(prompt_options: dict[str, Any], prompt: str) -> dict[str, Any]:
+    if not _prompt_requests_days_since_update(prompt):
+        return prompt_options
+
+    columns = prompt_options.get("columns")
+    if not isinstance(columns, list):
+        columns = []
+
+    guarded_columns: list[dict[str, str]] = []
+    seen: set[str] = set()
+    for item in columns:
+        if not isinstance(item, dict):
+            continue
+        key = str(item.get("key") or "").strip()
+        if key == "days_overdue":
+            continue
+        if key and key not in seen:
+            guarded_columns.append({"key": key, "label": str(item.get("label") or PROMPT_FIELD_LABELS.get(key, key))})
+            seen.add(key)
+
+    if "days_since_update" not in seen:
+        guarded_columns.append({"key": "days_since_update", "label": PROMPT_FIELD_LABELS["days_since_update"]})
+
+    return {**prompt_options, "columns": guarded_columns}
 
 
 def _parse_assignee_filters(prompt: str) -> list[dict[str, Any]]:
@@ -637,6 +671,7 @@ def _build_prompt_interpreter_request(prompt: str, defaults: dict[str, Any], con
         "assigned_to": "responsavel/atribuido para",
         "due_date": "data prevista",
         "days_overdue": "dias em atraso calculado",
+        "days_since_update": "dias sem atualizacao calculado a partir de updated_on/alterado em",
         "updated_on": "alterado em",
         "created_on": "criado em",
         "status": "status/situacao",
@@ -1124,6 +1159,7 @@ def _parse_prompt_filters(
                     details=_interpretation_failure_details(prompt, output),
                 )
 
+    output["prompt_options"] = _apply_explicit_column_guards(output["prompt_options"], prompt)
     return output
 
 
