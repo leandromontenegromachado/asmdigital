@@ -106,6 +106,7 @@ BASE_TEMPLATE_VARIABLES = [
     "link_demanda",
     "demanda_id",
     "nome_projeto",
+    "days_since_update",
 ]
 
 
@@ -138,6 +139,7 @@ def template_variables_for_automation(db: Session, automation_id: int, *, limit:
         "nome_projeto": "Alias para projeto, project ou entrega.",
         "link_demanda": "Link direto da demanda no Redmine quando houver source_ref/source_url.",
         "demanda_id": "ID da demanda no Redmine.",
+        "days_since_update": "Dias sem atualizacao calculado a partir do campo Alterado em do Redmine.",
     }
     return {
         "automation_id": automation_id,

@@ -82,6 +82,7 @@ const templateVariables = [
   { key: 'project_id', label: 'ID do projeto' },
   { key: 'status', label: 'Status do item' },
   { key: 'dias_atraso', label: 'Dias em atraso' },
+  { key: 'days_since_update', label: 'Dias sem atualizacao' },
   { key: 'acao_sugerida', label: 'Acao sugerida' },
   { key: 'subject', label: 'Titulo/demanda Redmine' },
   { key: 'assigned_to', label: 'Atribuido para Redmine' },
