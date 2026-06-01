@@ -170,11 +170,12 @@ def test_ai_interpreter_supports_days_since_update_column(monkeypatch):
     columns = filters["prompt_options"]["columns"]
 
     assert [column["key"] for column in columns] == [
+        "source_ref",
         "subject",
-        "status",
         "assigned_to",
         "due_date",
         "updated_on",
+        "status",
         "days_since_update",
     ]
     assert columns[-1]["label"] == "Dias sem atualização"
@@ -210,7 +211,14 @@ def test_resource_column_prompt_uses_assignee_without_ai(monkeypatch):
 
     assert filters["status_id"] == "open"
     assert {"field": "assigned_to", "operator": "contains", "values": ["leandro montenegro machado"]} in options["prompt_filters"]
-    assert [column["key"] for column in options["columns"]] == ["source_ref", "subject", "assigned_to"]
+    assert [column["key"] for column in options["columns"]] == [
+        "source_ref",
+        "subject",
+        "assigned_to",
+        "due_date",
+        "updated_on",
+        "status",
+    ]
     assert options["interpreter"] == "fallback"
 
 
@@ -223,7 +231,14 @@ def test_last_update_column_prompt_uses_updated_on_without_ai(monkeypatch):
 
     assert filters["status_id"] == "open"
     assert {"field": "assigned_to", "operator": "contains", "values": ["leandro montenegro machado"]} in options["prompt_filters"]
-    assert [column["key"] for column in options["columns"]] == ["source_ref", "subject", "assigned_to", "updated_on"]
+    assert [column["key"] for column in options["columns"]] == [
+        "source_ref",
+        "subject",
+        "assigned_to",
+        "due_date",
+        "updated_on",
+        "status",
+    ]
     assert options["interpreter"] == "fallback"
 
 
@@ -248,7 +263,14 @@ def test_ai_column_only_last_update_does_not_filter_rows(monkeypatch):
     filters = _parse_prompt_filters(None, prompt, {"project_ids": ["asm-dem"]})
     options = filters["prompt_options"]
 
-    assert [column["key"] for column in options["columns"]] == ["source_ref", "subject", "assigned_to", "updated_on"]
+    assert [column["key"] for column in options["columns"]] == [
+        "source_ref",
+        "subject",
+        "assigned_to",
+        "due_date",
+        "updated_on",
+        "status",
+    ]
     assert {"field": "assigned_to", "operator": "contains", "values": ["leandro montenegro machado"]} in options["prompt_filters"]
     assert not any(rule.get("field") == "updated_on" for rule in options["prompt_filters"])
     assert options["interpreter"] == "gemini"

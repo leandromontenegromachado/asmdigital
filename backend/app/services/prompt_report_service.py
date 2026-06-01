@@ -493,7 +493,7 @@ def _column_request_fields(prompt: str) -> set[str]:
     normalized = _normalize_prompt_text(prompt)
     fields: set[str] = set()
     for match in re.finditer(
-        r"(?:adicionar|adiciona|incluir|inclua|acrescentar|acrescente|colocar|coloque)\s+"
+        r"(?:adicionar|adiciona|adiconar|adicona|incluir|inclua|acrescentar|acrescente|colocar|coloque)\s+"
         r"(?:uma?\s+)?(?:coluna|campo)?s?\s*(?:com|de|da|do|para|a|o)?\s*([^.\r\n]+)",
         normalized,
         flags=re.IGNORECASE,
@@ -546,7 +546,7 @@ def _remove_column_only_filters(prompt_options: dict[str, Any], prompt: str) -> 
         values_text = " ".join(str(value) for value in raw_values if value not in (None, ""))
         normalized_values = _normalize_prompt_text(values_text)
         if field == "assigned_to" and re.search(
-            r"\b(adicionar|adiciona|incluir|inclua|acrescentar|acrescente|colocar|coloque|coluna|colunas|campo|campos)\b",
+            r"\b(adicionar|adiciona|adiconar|adicona|incluir|inclua|acrescentar|acrescente|colocar|coloque|coluna|colunas|campo|campos)\b",
             normalized_values,
             flags=re.IGNORECASE,
         ):
@@ -558,6 +558,37 @@ def _remove_column_only_filters(prompt_options: dict[str, Any], prompt: str) -> 
             continue
         kept_filters.append(rule)
     return {**prompt_options, "prompt_filters": kept_filters}
+
+
+def _requests_added_columns(prompt: str) -> bool:
+    normalized = _normalize_prompt_text(prompt)
+    if not re.search(r"\b(adicionar|adiciona|adiconar|adicona|incluir|inclua|acrescentar|acrescente|colocar|coloque)\b", normalized):
+        return False
+    return bool(re.search(r"\b(coluna|colunas|campo|campos)\b", normalized))
+
+
+def _merge_added_columns_with_defaults(prompt_options: dict[str, Any], prompt: str) -> dict[str, Any]:
+    if not _requests_added_columns(prompt):
+        return prompt_options
+    normalized = _normalize_prompt_text(prompt)
+    if re.search(r"\b(somente|apenas|deve\s+ter|devera\s+ter|tirar|remover|excluir|ocultar|nao\s+exibir)\b", normalized):
+        return prompt_options
+
+    columns = prompt_options.get("columns")
+    if not isinstance(columns, list):
+        columns = []
+
+    merged: list[dict[str, str]] = []
+    seen: set[str] = set()
+    for item in [*DEFAULT_REDMINE_COLUMNS, *columns]:
+        if not isinstance(item, dict):
+            continue
+        key = str(item.get("key") or "").strip()
+        if not key or key in seen:
+            continue
+        merged.append({"key": key, "label": str(item.get("label") or PROMPT_FIELD_LABELS.get(key, key))})
+        seen.add(key)
+    return {**prompt_options, "columns": merged}
 
 
 def _has_explicit_period(prompt: str) -> bool:
@@ -1243,6 +1274,7 @@ def _parse_prompt_filters(
                 )
 
     output["prompt_options"] = _remove_column_only_filters(output["prompt_options"], prompt)
+    output["prompt_options"] = _merge_added_columns_with_defaults(output["prompt_options"], prompt)
     output["prompt_options"] = _apply_explicit_column_guards(output["prompt_options"], prompt)
     return output
 

@@ -483,6 +483,8 @@ def generate_redmine_report(
         rows.sort(key=_report_row_sort_key)
     elif prompt_options and prompt_options.get("sort"):
         rows.sort(key=lambda row: _prompt_sort_key(row, prompt_options.get("sort")))
+    else:
+        rows.sort(key=_default_report_row_sort_key)
 
     db.add_all(rows)
     db.commit()
@@ -787,6 +789,14 @@ def _report_row_sort_key(row: ReportRow) -> tuple[int, str, str]:
     raw = row.raw_json or {}
     due_date = str(raw.get("due_date") or "9999-12-31")
     return (0 if raw.get("is_overdue") else 1, due_date, row.source_ref or "")
+
+
+def _default_report_row_sort_key(row: ReportRow) -> tuple[int, str]:
+    source_ref = str(row.source_ref or "")
+    try:
+        return (int(source_ref), source_ref)
+    except ValueError:
+        return (10**12, source_ref)
 
 
 def _prompt_sort_key(row: ReportRow, sort_rules: Any) -> tuple[Any, ...]:
