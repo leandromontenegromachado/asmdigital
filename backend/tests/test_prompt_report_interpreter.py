@@ -199,3 +199,16 @@ def test_explicit_days_since_update_prompt_does_not_become_days_overdue(monkeypa
 
     assert "days_since_update" in column_keys
     assert "days_overdue" not in column_keys
+
+
+def test_resource_column_prompt_uses_assignee_without_ai(monkeypatch):
+    monkeypatch.setattr("app.services.prompt_report_service._call_prompt_interpreter_ai", lambda *args, **kwargs: None)
+    prompt = "Trazer as demandas em aberto do recurso Leandro Montenegro Machado. Adiconar a coluna recurso."
+
+    filters = _parse_prompt_filters(None, prompt, {"project_ids": ["asm-dem"]})
+    options = filters["prompt_options"]
+
+    assert filters["status_id"] == "open"
+    assert {"field": "assigned_to", "operator": "contains", "values": ["leandro montenegro machado"]} in options["prompt_filters"]
+    assert [column["key"] for column in options["columns"]] == ["source_ref", "subject", "assigned_to"]
+    assert options["interpreter"] == "fallback"

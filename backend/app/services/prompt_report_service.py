@@ -108,7 +108,7 @@ def _should_use_saved_query(prompt: str) -> bool:
 
 PROMPT_COLUMN_CANDIDATES = [
     ("subject", "Titulo", ("titulo", "título", "assunto", "demanda")),
-    ("assigned_to", "Atribuido para", ("atribuido", "atribuído", "responsavel", "responsável")),
+    ("assigned_to", "Atribuido para", ("atribuido", "atribuído", "responsavel", "responsável", "recurso")),
     ("due_date", "Data prevista", ("data prevista", "prevista", "vencimento")),
     ("days_overdue", "Dias em atraso", ("dias em atraso", "dias atraso", "dias vencido", "dias vencidos")),
     ("days_since_update", "Dias sem atualização", ("dias sem atualizacao", "dias sem atualização", "dias sem alterar", "dias sem alteracao", "dias sem alteração")),
@@ -156,7 +156,7 @@ def _prompt_columns(prompt: str) -> list[dict[str, str]]:
     excluded_columns = set(_parse_excluded_columns(prompt))
     candidates = [
         ("subject", "Titulo", ("titulo", "título", "assunto", "demanda")),
-        ("assigned_to", "Atribuido para", ("atribuido", "atribuído", "responsavel", "responsável")),
+        ("assigned_to", "Atribuido para", ("atribuido", "atribuído", "responsavel", "responsável", "recurso")),
         ("due_date", "Data prevista", ("data prevista", "prevista", "vencimento")),
         ("days_overdue", "Dias em atraso", ("dias em atraso", "dias atraso", "dias vencido", "dias vencidos")),
         ("days_since_update", "Dias sem atualização", ("dias sem atualizacao", "dias sem atualização", "dias sem alterar", "dias sem alteracao", "dias sem alteração")),
@@ -478,7 +478,7 @@ def _parse_assignee_filters(prompt: str) -> list[dict[str, Any]]:
     seen: set[str] = set()
     for pattern in patterns:
         for match in re.finditer(pattern, normalized, flags=re.IGNORECASE):
-            name = re.split(stop_pattern, match.group("name"), maxsplit=1, flags=re.IGNORECASE)[0]
+            name = re.split(r"[.\r\n]|" + stop_pattern, match.group("name"), maxsplit=1, flags=re.IGNORECASE)[0]
             name = name.strip(" .,:;-")
             if not name or name in {"especifico", "especifica"}:
                 continue
@@ -611,6 +611,14 @@ def _requires_ai_interpretation(prompt: str) -> bool:
     normalized = _normalize_prompt_text(_objective_text(prompt))
     if len(normalized) > 120:
         return True
+    if re.search(r"\bcolunas?\b", normalized, flags=re.IGNORECASE):
+        complex_terms = (
+            r"status|situacao|data\s+prevista|vazia|vazio|"
+            r"atras|atrasada|atrasado|orden|menor\s+que|maior\s+que|"
+            r"nao\s+trazer|exceto|homologa"
+        )
+        if _prompt_columns(prompt) and not re.search(rf"\b({complex_terms})\b", normalized, flags=re.IGNORECASE):
+            return False
     return bool(
         re.search(
             r"\b("
