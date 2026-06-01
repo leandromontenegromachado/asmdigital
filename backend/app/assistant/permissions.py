@@ -1,9 +1,9 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 from app.models import User
 
 
-READ_ACTIONS = {"list", "status", "capabilities", "list_late_projects"}
+READ_ACTIONS = {"list", "status", "capabilities", "list_late_projects", "analyze"}
 ADMIN_ACTIONS = {
     ("employees", "create"),
     ("employees", "update"),
@@ -46,3 +46,4 @@ def can_execute(user: User | None, domain: str, action: str | None = None) -> bo
     if (domain_name, action_name) in MANAGER_ACTIONS:
         return role == "gerente"
     return role == "gerente"
+

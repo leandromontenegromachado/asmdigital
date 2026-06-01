@@ -1,9 +1,10 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 from app.assistant.actions.capabilities import CapabilitiesAction
 from app.assistant.actions.employees import EmployeesAction
 from app.assistant.actions.evaluation import EvaluationAction
 from app.assistant.actions.pending_items import PendingItemsAction
+from app.assistant.actions.project_advisor import ProjectAdvisorAction
 from app.assistant.actions.reports import ReportsAction
 from app.assistant.actions.routines import RoutinesAction
 from app.assistant.actions.notifications import NotificationsAction
@@ -21,6 +22,7 @@ ACTION_REGISTRY = {
     "employees": EmployeesAction(),
     "pending_items": PendingItemsAction(),
     "evaluation": EvaluationAction(),
+    "project_advisor": ProjectAdvisorAction(),
 }
 
 

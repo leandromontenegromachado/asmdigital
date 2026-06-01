@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import secrets
+
 from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
 from sqlalchemy.orm import Session
 
@@ -242,7 +244,11 @@ async def telegram_webhook(
     x_telegram_bot_api_secret_token: str | None = Header(default=None),
     db: Session = Depends(get_db),
 ):
-    if settings.telegram_webhook_secret and x_telegram_bot_api_secret_token != settings.telegram_webhook_secret:
+    expected_secret = (settings.telegram_webhook_secret or "").strip()
+    if not expected_secret:
+        raise HTTPException(status_code=503, detail="Telegram webhook secret is not configured")
+    provided_secret = (x_telegram_bot_api_secret_token or "").strip()
+    if not secrets.compare_digest(provided_secret, expected_secret):
         raise HTTPException(status_code=403, detail="Invalid Telegram secret")
     payload = await request.json()
     return process_telegram_update(payload, db)

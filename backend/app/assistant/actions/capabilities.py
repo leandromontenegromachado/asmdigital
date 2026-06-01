@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 from typing import Any
 
@@ -12,6 +12,7 @@ from app.models import User
 CAPABILITIES: list[dict[str, Any]] = [
     {"domain": "reports_ai", "label": "Relatorios IA", "actions": ["listar", "executar com confirmacao"]},
     {"domain": "reports_redmine", "label": "Relatorios Redmine", "actions": ["listar recentes", "executar com confirmacao"]},
+    {"domain": "project_advisor", "label": "Agente consultivo", "actions": ["avaliar projetos Redmine", "somente leitura"]},
     {"domain": "routines", "label": "Rotinas", "actions": ["listar", "criar com confirmacao"]},
     {"domain": "notifications", "label": "Notificacoes", "actions": ["enviar com confirmacao"]},
     {"domain": "employees", "label": "Funcionarios", "actions": ["consultar", "cadastrar com confirmacao"]},

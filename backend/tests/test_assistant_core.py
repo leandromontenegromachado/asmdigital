@@ -1,4 +1,4 @@
-from types import SimpleNamespace
+﻿from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 import pytest
 
@@ -418,11 +418,11 @@ def test_permission_denied_for_employee_create():
 
 def test_prompt_report_complex_prompt_requires_ai_or_cached_plan():
     prompt = (
-        "Quero um relatório que liste as demandas em execução que estão com o campo data prevista vazia, "
-        "ou seja, sem uma data prevista definida, com data de atualização a mais de 7 dias. "
-        "Este relatório deve ter os campos título da demanda, situação, atribuído para, data prevista e alterado em. "
-        "Ordene pelo responsável, ou seja, campo atribuído para. Quero somente as que estão em execução "
-        "e não trazer as demanda que estão com status homologada ou homologação."
+        "Quero um relatÃ³rio que liste as demandas em execuÃ§Ã£o que estÃ£o com o campo data prevista vazia, "
+        "ou seja, sem uma data prevista definida, com data de atualizaÃ§Ã£o a mais de 7 dias. "
+        "Este relatÃ³rio deve ter os campos tÃ­tulo da demanda, situaÃ§Ã£o, atribuÃ­do para, data prevista e alterado em. "
+        "Ordene pelo responsÃ¡vel, ou seja, campo atribuÃ­do para. Quero somente as que estÃ£o em execuÃ§Ã£o "
+        "e nÃ£o trazer as demanda que estÃ£o com status homologada ou homologaÃ§Ã£o."
     )
 
     with patch("app.services.prompt_report_service._call_prompt_interpreter_ai", return_value=None):
@@ -434,11 +434,11 @@ def test_prompt_report_complex_prompt_requires_ai_or_cached_plan():
 
 
 def test_prompt_report_complex_prompt_uses_ai_plan():
-    prompt = "Quero um relatório com status Homologação."
+    prompt = "Quero um relatÃ³rio com status HomologaÃ§Ã£o."
     ai_plan = {
         "project_ids": ["asm-dem"],
         "status_id": "open",
-        "filters": [{"field": "status", "operator": "in", "values": ["Homologação"]}],
+        "filters": [{"field": "status", "operator": "in", "values": ["HomologaÃ§Ã£o"]}],
         "columns": [{"key": "subject"}, {"key": "status"}],
         "sort": [{"field": "status", "direction": "asc"}],
     }
@@ -448,13 +448,13 @@ def test_prompt_report_complex_prompt_uses_ai_plan():
 
     assert filters["prompt_options"]["interpreter"] == "gemini"
     assert filters["prompt_options"]["interpreter_model"] == "test-model"
-    assert {"field": "status", "operator": "in", "values": ["Homologação"]} in filters["prompt_options"]["prompt_filters"]
+    assert {"field": "status", "operator": "in", "values": ["HomologaÃ§Ã£o"]} in filters["prompt_options"]["prompt_filters"]
 
 
 def test_prompt_report_drops_spurious_subject_filter_from_ai_plan():
     prompt = (
-        "Quero um relatório que liste as demandas em execução que estão em atraso. "
-        "Não trazer as demanda que estão com status homologada ou homologação."
+        "Quero um relatÃ³rio que liste as demandas em execuÃ§Ã£o que estÃ£o em atraso. "
+        "NÃ£o trazer as demanda que estÃ£o com status homologada ou homologaÃ§Ã£o."
     )
     ai_plan = {
         "project_ids": ["asm-dem"],
@@ -481,3 +481,21 @@ def test_prompt_report_projects_are_limited_to_connector_scope():
     assert _connector_scoped_project_ids(connector, []) == ["asm-dem"]
     assert _connector_scoped_project_ids(connector, ["asm-dem", "outro-projeto"]) == ["asm-dem"]
     assert _connector_scoped_project_ids(connector, ["outro-projeto"]) == ["asm-dem"]
+
+
+def test_project_advisor_command_is_read_only():
+    plan = deterministic_plan("avalie o projeto asm-dem no Redmine")
+
+    assert plan.intent == "analyze_redmine_project"
+    assert plan.domain == "project_advisor"
+    assert plan.action == "analyze"
+    assert plan.requires_confirmation is False
+    assert plan.extracted_params["project_id"] == "asm-dem"
+
+
+def test_project_advisor_missing_project_requests_input():
+    plan = deterministic_plan("avalie o projeto no Redmine")
+
+    assert plan.domain == "project_advisor"
+    assert plan.action == "analyze"
+    assert plan.missing_params == ["project_id"]

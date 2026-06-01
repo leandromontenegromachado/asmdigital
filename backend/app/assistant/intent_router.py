@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import json
 import re
@@ -25,6 +25,7 @@ class AssistantIntent(StrEnum):
     CREATE_ROUTINE = "create_routine"
     CREATE_MEETING = "create_meeting"
     GET_EVALUATION_360 = "get_evaluation_360"
+    ANALYZE_REDMINE_PROJECT = "analyze_redmine_project"
     UNKNOWN = "unknown"
 
 
@@ -89,10 +90,16 @@ MEETING_CREATE_ACTION_ALIASES = {
 
 
 def interpret_command(text: str, db: Session | None = None, knowledge_context: str | None = None) -> AssistantPlan:
-    ai_plan = _interpret_with_ai(text, db, knowledge_context=knowledge_context)
     fallback = deterministic_plan(text)
+    if fallback.domain == "project_advisor" and fallback.action == "analyze":
+        return fallback
+
+    ai_plan = _interpret_with_ai(text, db, knowledge_context=knowledge_context)
     if ai_plan and ai_plan.confidence >= 0.65:
-        return _normalize_plan(ai_plan)
+        normalized_ai_plan = _normalize_plan(ai_plan)
+        if normalized_ai_plan.domain == "reports_redmine" and fallback.domain == "project_advisor":
+            return fallback
+        return normalized_ai_plan
     return fallback
 
 
@@ -257,7 +264,7 @@ def deterministic_plan(text: str) -> AssistantPlan:
             confidence=0.84,
             extracted_params={
                 "target": "responsaveis" if "respons" in normalized else None,
-                "source": "last_report" if "ultimo relatorio" in normalized or "ultimo relatório" in normalized else None,
+                "source": "last_report" if "ultimo relatorio" in normalized or "ultimo relatÃ³rio" in normalized else None,
                 "channel": "email" if "email" in normalized or "e-mail" in normalized else None,
             },
             summary_for_user="Vou preparar o envio de notificacao para confirmacao.",
@@ -265,6 +272,19 @@ def deterministic_plan(text: str) -> AssistantPlan:
             permission_required="manager",
         )
 
+    if _looks_like_project_advisor_request(normalized):
+        project_id = _project_id_from_advisor_text(text)
+        return AssistantPlan(
+            intent=AssistantIntent.ANALYZE_REDMINE_PROJECT.value,
+            domain="project_advisor",
+            action="analyze",
+            requires_confirmation=False,
+            confidence=0.86,
+            extracted_params={"project_id": project_id, "days_stale": _days_stale_from_text(text)},
+            missing_params=[] if project_id else ["project_id"],
+            summary_for_user="Vou avaliar o projeto no Redmine em modo somente leitura.",
+            permission_required="funcionario",
+        )
     if "redmine" in normalized and any(word in normalized for word in ("demanda", "demandas", "chamado", "chamados")):
         return AssistantPlan(
             intent=AssistantIntent.RUN_REPORT.value,
@@ -342,7 +362,7 @@ def _interpret_with_ai(text: str, db: Session | None, knowledge_context: str | N
                 "answer_to_user com uma resposta util e curta. "
                 "should_execute=true apenas quando o usuario pedir explicitamente para executar, consultar, criar, "
                 "enviar, resolver, agendar, listar ou rodar uma funcionalidade do sistema. "
-                "Dominios validos: reports_ai, reports_redmine, routines, notifications, employees, "
+                "Dominios validos: reports_ai, reports_redmine, project_advisor, routines, notifications, employees, "
                 "management_events, pending_items, evaluation, chefia, connectors, meetings, general. "
                 "Marque requires_confirmation=true para qualquer acao que altere dados ou dispare efeitos externos. "
                 "Use a base de conhecimento fornecida para escolher melhor dominio e acao, mas nunca invente execucao fora dos dominios validos."
@@ -409,7 +429,7 @@ def _first_int(text: str) -> int | None:
 
 def _evaluation_employee_from_text(text: str) -> str | None:
     patterns = [
-        r"(?:avaliacao|avalia[cç][aã]o)\s*360\s+(?:do|da|de)\s+(.+)$",
+        r"(?:avaliacao|avalia[cÃ§][aÃ£]o)\s*360\s+(?:do|da|de)\s+(.+)$",
         r"\b360\s+(?:do|da|de)\s+(.+)$",
         r"\b(?:do|da|de)\s+(.+)$",
     ]
@@ -417,7 +437,7 @@ def _evaluation_employee_from_text(text: str) -> str | None:
         match = re.search(pattern, text, flags=re.IGNORECASE)
         if match:
             value = re.split(
-                r"\s+(?:no|na|em)\s+(?:ciclo|periodo|per[ií]odo)\b",
+                r"\s+(?:no|na|em)\s+(?:ciclo|periodo|per[iÃ­]odo)\b",
                 match.group(1).strip(" .?"),
                 maxsplit=1,
                 flags=re.IGNORECASE,
@@ -427,7 +447,7 @@ def _evaluation_employee_from_text(text: str) -> str | None:
 
 
 def _comment_from_text(text: str) -> str | None:
-    match = re.search(r"coment[aá]rio\s*:\s*(.+)$", text, flags=re.IGNORECASE)
+    match = re.search(r"coment[aÃ¡]rio\s*:\s*(.+)$", text, flags=re.IGNORECASE)
     if match:
         return match.group(1).strip(" .")
     return None
@@ -437,7 +457,7 @@ def _employee_params(text: str) -> dict[str, Any]:
     email_match = re.search(r"[\w.\-+]+@[\w.\-]+\.\w+", text)
     email = email_match.group(0).lower() if email_match else None
     without_email = text.replace(email, "") if email else text
-    name_match = re.search(r"(?:cadastre|cadastrar|crie|adicionar|inclua)\s+(.+?)(?:\s+como\s+funcion[aá]rio|\s+do\s+setor|\s+com\s+e-mail|$)", without_email, flags=re.IGNORECASE)
+    name_match = re.search(r"(?:cadastre|cadastrar|crie|adicionar|inclua)\s+(.+?)(?:\s+como\s+funcion[aÃ¡]rio|\s+do\s+setor|\s+com\s+e-mail|$)", without_email, flags=re.IGNORECASE)
     setor_match = re.search(r"setor\s+(.+?)(?:\s+com\s+e-mail|$)", text, flags=re.IGNORECASE)
     return {
         "name": name_match.group(1).strip(" .") if name_match else None,
@@ -475,13 +495,13 @@ def _owner_from_report_text(text: str) -> str | None:
         r"\bem aberto\s+(?:do|da|de)\s+(.+)$",
         r"\babertas?\s+(?:do|da|de)\s+(.+)$",
         r"\babertos?\s+(?:do|da|de)\s+(.+)$",
-        r"\b(?:respons[aá]vel|atribu[ií]do para|usuario|usu[aá]rio)\s+(.+)$",
+        r"\b(?:respons[aÃ¡]vel|atribu[iÃ­]do para|usuario|usu[aÃ¡]rio)\s+(.+)$",
     ]
     for pattern in patterns:
         match = re.search(pattern, text, flags=re.IGNORECASE)
         if match:
             owner = re.split(
-                r"\s+(?:no|na|do|da)\s+(?:redmine|relat[oó]rio)\b",
+                r"\s+(?:no|na|do|da)\s+(?:redmine|relat[oÃ³]rio)\b",
                 match.group(1).strip(" ."),
                 maxsplit=1,
                 flags=re.IGNORECASE,
@@ -491,7 +511,7 @@ def _owner_from_report_text(text: str) -> str | None:
 
 
 def _template_id_from_text(text: str) -> int | None:
-    match = re.search(r"(?:template|modelo|relatorio|relat[oó]rio)\s*#?\s*(\d+)", text, flags=re.IGNORECASE)
+    match = re.search(r"(?:template|modelo|relatorio|relat[oÃ³]rio)\s*#?\s*(\d+)", text, flags=re.IGNORECASE)
     return int(match.group(1)) if match else None
 
 
@@ -500,17 +520,17 @@ def _looks_like_capability_question(normalized: str) -> bool:
         "consegue",
         "vc consegue",
         "voce consegue",
-        "você consegue",
+        "vocÃª consegue",
         "pode",
         "vc pode",
         "voce pode",
-        "você pode",
+        "vocÃª pode",
         "sabe",
         "da para",
-        "dá para",
+        "dÃ¡ para",
         "e possivel",
-        "é possivel",
-        "é possível",
+        "Ã© possivel",
+        "Ã© possÃ­vel",
     )
     direct_markers = (
         "me liste",
@@ -533,10 +553,12 @@ def _looks_like_capability_question(normalized: str) -> bool:
 
 
 def _capability_domain(normalized: str) -> str:
-    if any(word in normalized for word in ("agendar", "agenda", "reuniao", "reunião")):
+    if any(word in normalized for word in ("agendar", "agenda", "reuniao", "reuniÃ£o")):
         return "meetings"
     if "360" in normalized or "avaliacao" in normalized:
         return "evaluation"
+    if "avaliar projeto" in normalized or "analise projeto" in normalized or "analisar projeto" in normalized or "risco do projeto" in normalized:
+        return "project_advisor"
     if "redmine" in normalized or "relatorio" in normalized or "demandas" in normalized:
         return "reports_redmine"
     if "rotina" in normalized:
@@ -559,3 +581,45 @@ def _capability_answer(normalized: str) -> str:
     if domain == "notifications":
         return "Sim, posso preparar notificacoes. Envio de notificacao sempre exige previa e confirmacao."
     return "Sim, posso responder duvidas sobre o ASM Digital e operar funcionalidades do sistema quando voce pedir uma acao especifica."
+
+
+
+def _looks_like_project_advisor_request(normalized: str) -> bool:
+    advisor_markers = (
+        "avalie o projeto",
+        "avaliar o projeto",
+        "analise o projeto",
+        "analisar o projeto",
+        "diagnostico do projeto",
+        "diagnóstico do projeto",
+        "risco do projeto",
+        "riscos do projeto",
+        "saude do projeto",
+        "saúde do projeto",
+    )
+    return any(marker in normalized for marker in advisor_markers) and "redmine" in normalized
+
+
+def _project_id_from_advisor_text(text: str) -> str | None:
+    patterns = [
+        r"\bprojeto\s+([\w\-.]+)",
+        r"\bproject\s+([\w\-.]+)",
+        r"\bredmine\s+([\w\-.]+)",
+    ]
+    for pattern in patterns:
+        match = re.search(pattern, text, flags=re.IGNORECASE)
+        if match:
+            value = match.group(1).strip(" .,")
+            if value.lower() not in {"no", "na", "do", "da", "de", "redmine"}:
+                return value[:120]
+    return None
+
+
+def _days_stale_from_text(text: str) -> int:
+    match = re.search(r"(\d+)\s+dias?\s+sem\s+atualiza", text, flags=re.IGNORECASE)
+    if match:
+        return max(1, min(int(match.group(1)), 90))
+    return 7
+
+
+
