@@ -308,6 +308,51 @@ def test_ai_contaminated_assignee_filter_is_removed(monkeypatch):
     )
 
 
+def test_ai_implicit_sort_is_removed_when_user_did_not_ask_for_order(monkeypatch):
+    prompt = (
+        "Trazer as demandas em aberto do recurso Leandro Montenegro Machado. "
+        "Adicionar uma coluna com a ultima atualizacao e status"
+    )
+
+    monkeypatch.setattr(
+        "app.services.prompt_report_service._call_prompt_interpreter_ai",
+        lambda *args, **kwargs: (
+            {
+                "status_id": "open",
+                "columns": ["source_ref", "subject", "status", "assigned_to", "due_date", "updated_on"],
+                "filters": [{"field": "assigned_to", "operator": "contains", "values": ["Leandro Montenegro Machado"]}],
+                "sort": [{"field": "days_overdue", "direction": "desc"}],
+            },
+            "test-model",
+        ),
+    )
+
+    filters = _parse_prompt_filters(None, prompt, {"project_ids": ["asm-dem"]})
+
+    assert "sort" not in filters["prompt_options"]
+
+
+def test_ai_explicit_sort_is_kept(monkeypatch):
+    prompt = "Trazer demandas em aberto do recurso Leandro Montenegro Machado ordene por data prevista."
+
+    monkeypatch.setattr(
+        "app.services.prompt_report_service._call_prompt_interpreter_ai",
+        lambda *args, **kwargs: (
+            {
+                "status_id": "open",
+                "columns": ["subject", "due_date"],
+                "filters": [{"field": "assigned_to", "operator": "contains", "values": ["Leandro Montenegro Machado"]}],
+                "sort": [{"field": "due_date", "direction": "asc"}],
+            },
+            "test-model",
+        ),
+    )
+
+    filters = _parse_prompt_filters(None, prompt, {"project_ids": ["asm-dem"]})
+
+    assert filters["prompt_options"]["sort"] == [{"field": "due_date", "direction": "asc"}]
+
+
 def test_ai_date_update_condition_keeps_updated_on_filter(monkeypatch):
     prompt = "Trazer demandas com data de atualizacao com mais de 7 dias. Adicionar coluna ultima atualizacao."
 

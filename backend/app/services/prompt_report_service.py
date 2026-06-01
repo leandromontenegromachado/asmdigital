@@ -432,6 +432,28 @@ def _parse_prompt_sort(prompt: str) -> list[dict[str, str]]:
     return []
 
 
+def _has_explicit_sort_intent(prompt: str) -> bool:
+    normalized = _normalize_prompt_text(prompt)
+    return bool(
+        re.search(
+            r"\b(ordenar|ordene|ordena|ordem|classificar|classifique|mais\s+atrasad[ao]s?|menos\s+atrasad[ao]s?|"
+            r"maior\s+atraso|menor\s+atraso|mais\s+recentes?|mais\s+antigas?)\b",
+            normalized,
+            flags=re.IGNORECASE,
+        )
+    )
+
+
+def _remove_implicit_sort(prompt_options: dict[str, Any], prompt: str) -> dict[str, Any]:
+    if _has_explicit_sort_intent(prompt):
+        return prompt_options
+    if "sort" not in prompt_options:
+        return prompt_options
+    cleaned = dict(prompt_options)
+    cleaned.pop("sort", None)
+    return cleaned
+
+
 def _prompt_requests_days_since_update(prompt: str) -> bool:
     normalized = _normalize_prompt_text(prompt)
     return bool(re.search(r"dias?\s+sem\s+(?:atualizacao|alteracao|alterar|atualizar)", normalized))
@@ -1274,6 +1296,7 @@ def _parse_prompt_filters(
                 )
 
     output["prompt_options"] = _remove_column_only_filters(output["prompt_options"], prompt)
+    output["prompt_options"] = _remove_implicit_sort(output["prompt_options"], prompt)
     output["prompt_options"] = _merge_added_columns_with_defaults(output["prompt_options"], prompt)
     output["prompt_options"] = _apply_explicit_column_guards(output["prompt_options"], prompt)
     return output
