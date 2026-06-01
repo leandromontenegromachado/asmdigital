@@ -243,11 +243,11 @@ def _field_from_prompt_label(value: str) -> str | None:
     aliases = {
         "source_ref": ("id", "numero", "número", "codigo", "código"),
         "subject": ("titulo", "título", "assunto", "demanda"),
-        "assigned_to": ("atribuido", "atribuído", "atribuido para", "responsavel", "responsável"),
+        "assigned_to": ("atribuido", "atribuído", "atribuido para", "responsavel", "responsável", "recurso"),
         "due_date": ("data prevista", "prevista", "vencimento"),
         "days_overdue": ("dias em atraso", "dias atraso", "dias vencido", "dias vencidos"),
         "days_since_update": ("dias sem atualizacao", "dias sem atualização", "dias sem alterar", "dias sem alteracao", "dias sem alteração"),
-        "updated_on": ("alterado", "atualizado", "modificado"),
+        "updated_on": ("alterado", "atualizado", "atualizacao", "atualização", "ultima atualizacao", "última atualização", "data de atualizacao", "data de atualização", "modificado"),
         "status": ("status", "situacao", "situação"),
         "priority": ("prioridade",),
         "tracker": ("tipo", "tracker"),
@@ -489,6 +489,68 @@ def _parse_assignee_filters(prompt: str) -> list[dict[str, Any]]:
     return filters
 
 
+def _column_request_fields(prompt: str) -> set[str]:
+    normalized = _normalize_prompt_text(prompt)
+    fields: set[str] = set()
+    for match in re.finditer(
+        r"(?:adicionar|adiciona|incluir|inclua|acrescentar|acrescente|colocar|coloque)\s+"
+        r"(?:uma?\s+)?(?:coluna|campo)?s?\s*(?:com|de|da|do|para|a|o)?\s*([^.\r\n]+)",
+        normalized,
+        flags=re.IGNORECASE,
+    ):
+        segment = re.split(
+            r"\s+(?:e|tambem|filtrar|filtro|onde|quando|com\s+mais|mais\s+de|menos\s+de|maior|menor|antes|depois|vazi[ao])\b",
+            match.group(1),
+            maxsplit=1,
+            flags=re.IGNORECASE,
+        )[0]
+        field = _field_from_prompt_label(segment)
+        if field:
+            fields.add(field)
+    return fields
+
+
+def _field_has_explicit_filter_intent(prompt: str, field: str) -> bool:
+    normalized = _normalize_prompt_text(prompt)
+    field_terms = {
+        field,
+        *(_normalize_prompt_text(term) for candidate_field, _, terms in PROMPT_COLUMN_CANDIDATES if candidate_field == field for term in terms),
+    }
+    condition_pattern = r"(?:vazi[ao]|em\s+branco|mais\s+de|menos\s+de|maior\s+que|menor\s+que|antes|depois|anterior|posterior|igual|diferente|com\s+status|status\s+de)"
+    for term in field_terms:
+        if not term:
+            continue
+        if re.search(rf"{re.escape(term)}.{{0,80}}\b{condition_pattern}\b", normalized, flags=re.IGNORECASE):
+            return True
+        if re.search(rf"\b{condition_pattern}\b.{{0,80}}{re.escape(term)}", normalized, flags=re.IGNORECASE):
+            return True
+    return False
+
+
+def _remove_column_only_filters(prompt_options: dict[str, Any], prompt: str) -> dict[str, Any]:
+    requested_fields = _column_request_fields(prompt)
+    if not requested_fields:
+        return prompt_options
+
+    filters = prompt_options.get("prompt_filters")
+    if not isinstance(filters, list):
+        return prompt_options
+
+    kept_filters = []
+    assignee_filter_requested = bool(_parse_assignee_filters(prompt))
+    for rule in filters:
+        if not isinstance(rule, dict):
+            continue
+        field = str(rule.get("field") or "").strip()
+        if field == "assigned_to" and assignee_filter_requested:
+            kept_filters.append(rule)
+            continue
+        if field in requested_fields and not _field_has_explicit_filter_intent(prompt, field):
+            continue
+        kept_filters.append(rule)
+    return {**prompt_options, "prompt_filters": kept_filters}
+
+
 def _has_explicit_period(prompt: str) -> bool:
     normalized = _normalize_prompt_text(prompt)
     return bool(
@@ -676,11 +738,11 @@ def _build_prompt_interpreter_request(prompt: str, defaults: dict[str, Any], con
     fields = {
         "source_ref": "ID da demanda",
         "subject": "titulo/assunto",
-        "assigned_to": "responsavel/atribuido para",
+        "assigned_to": "responsavel/atribuido para/recurso",
         "due_date": "data prevista",
         "days_overdue": "dias em atraso calculado",
         "days_since_update": "dias sem atualizacao calculado a partir de updated_on/alterado em",
-        "updated_on": "alterado em",
+        "updated_on": "alterado em/ultima atualizacao/data de atualizacao",
         "created_on": "criado em",
         "status": "status/situacao",
         "priority": "prioridade",
@@ -709,6 +771,10 @@ def _build_prompt_interpreter_request(prompt: str, defaults: dict[str, Any], con
         "Nao execute consulta e nao invente campos fora da lista permitida.\n"
         "Use datas em ISO YYYY-MM-DD. Para hoje use a data atual informada.\n"
         "Quando o usuario pedir para tirar/remover/nao exibir colunas, retorne columns com a lista final exibida.\n"
+        "Quando o usuario pedir adicionar/incluir/acrescentar uma coluna/campo, isso deve alterar somente columns; "
+        "nao crie filters para esse campo a menos que exista uma condicao explicita como vazio, mais de, menos de, antes, depois, maior ou menor.\n"
+        "Exemplo: 'adicionar coluna ultima atualizacao' deve incluir updated_on em columns, sem criar filter em updated_on.\n"
+        "Exemplo: 'demandas com data de atualizacao com mais de 7 dias' deve criar filter em updated_on.\n"
         "Quando o usuario pedir regra de nao exibicao de linhas, retorne em filters.\n"
         "Exemplo: 'nao trazer demandas com status de homologada e homologacao' deve virar "
         "{\"field\":\"status\",\"operator\":\"not_in\",\"values\":[\"homologada\",\"homologacao\"]}.\n"
@@ -1167,6 +1233,7 @@ def _parse_prompt_filters(
                     details=_interpretation_failure_details(prompt, output),
                 )
 
+    output["prompt_options"] = _remove_column_only_filters(output["prompt_options"], prompt)
     output["prompt_options"] = _apply_explicit_column_guards(output["prompt_options"], prompt)
     return output
 

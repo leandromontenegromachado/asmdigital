@@ -225,3 +225,50 @@ def test_last_update_column_prompt_uses_updated_on_without_ai(monkeypatch):
     assert {"field": "assigned_to", "operator": "contains", "values": ["leandro montenegro machado"]} in options["prompt_filters"]
     assert [column["key"] for column in options["columns"]] == ["source_ref", "subject", "assigned_to", "updated_on"]
     assert options["interpreter"] == "fallback"
+
+
+def test_ai_column_only_last_update_does_not_filter_rows(monkeypatch):
+    prompt = "Trazer as demandas em aberto do recurso Leandro Montenegro Machado. Adicionar uma coluna com a ultima atualizacao"
+
+    monkeypatch.setattr(
+        "app.services.prompt_report_service._call_prompt_interpreter_ai",
+        lambda *args, **kwargs: (
+            {
+                "status_id": "open",
+                "columns": ["source_ref", "subject", "assigned_to", "updated_on"],
+                "filters": [
+                    {"field": "assigned_to", "operator": "contains", "values": ["Leandro Montenegro Machado"]},
+                    {"field": "updated_on", "operator": "contains", "values": ["ultima atualizacao"]},
+                ],
+            },
+            "test-model",
+        ),
+    )
+
+    filters = _parse_prompt_filters(None, prompt, {"project_ids": ["asm-dem"]})
+    options = filters["prompt_options"]
+
+    assert [column["key"] for column in options["columns"]] == ["source_ref", "subject", "assigned_to", "updated_on"]
+    assert {"field": "assigned_to", "operator": "contains", "values": ["leandro montenegro machado"]} in options["prompt_filters"]
+    assert not any(rule.get("field") == "updated_on" for rule in options["prompt_filters"])
+    assert options["interpreter"] == "gemini"
+
+
+def test_ai_date_update_condition_keeps_updated_on_filter(monkeypatch):
+    prompt = "Trazer demandas com data de atualizacao com mais de 7 dias. Adicionar coluna ultima atualizacao."
+
+    monkeypatch.setattr(
+        "app.services.prompt_report_service._call_prompt_interpreter_ai",
+        lambda *args, **kwargs: (
+            {
+                "columns": ["subject", "updated_on"],
+                "filters": [{"field": "updated_on", "operator": "lt", "value": "2026-05-25"}],
+            },
+            "test-model",
+        ),
+    )
+
+    filters = _parse_prompt_filters(None, prompt, {"project_ids": ["asm-dem"]})
+    options = filters["prompt_options"]
+
+    assert {"field": "updated_on", "operator": "lt", "value": "2026-05-25"} in options["prompt_filters"]
