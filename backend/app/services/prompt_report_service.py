@@ -542,6 +542,15 @@ def _remove_column_only_filters(prompt_options: dict[str, Any], prompt: str) -> 
         if not isinstance(rule, dict):
             continue
         field = str(rule.get("field") or "").strip()
+        raw_values = rule.get("values") if isinstance(rule.get("values"), list) else [rule.get("value")]
+        values_text = " ".join(str(value) for value in raw_values if value not in (None, ""))
+        normalized_values = _normalize_prompt_text(values_text)
+        if field == "assigned_to" and re.search(
+            r"\b(adicionar|adiciona|incluir|inclua|acrescentar|acrescente|colocar|coloque|coluna|colunas|campo|campos)\b",
+            normalized_values,
+            flags=re.IGNORECASE,
+        ):
+            continue
         if field == "assigned_to" and assignee_filter_requested:
             kept_filters.append(rule)
             continue

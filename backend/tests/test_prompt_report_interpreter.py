@@ -254,6 +254,38 @@ def test_ai_column_only_last_update_does_not_filter_rows(monkeypatch):
     assert options["interpreter"] == "gemini"
 
 
+def test_ai_contaminated_assignee_filter_is_removed(monkeypatch):
+    prompt = "Trazer as demandas em aberto do recurso Leandro Montenegro Machado. Adicionar uma coluna com a ultima atualizacao"
+
+    monkeypatch.setattr(
+        "app.services.prompt_report_service._call_prompt_interpreter_ai",
+        lambda *args, **kwargs: (
+            {
+                "status_id": "open",
+                "columns": ["subject", "updated_on"],
+                "filters": [
+                    {
+                        "field": "assigned_to",
+                        "operator": "contains",
+                        "values": ["leandro montenegro machado. adicionar uma coluna com a ultima atualizacao"],
+                    },
+                ],
+            },
+            "test-model",
+        ),
+    )
+
+    filters = _parse_prompt_filters(None, prompt, {"project_ids": ["asm-dem"]})
+    options = filters["prompt_options"]
+
+    assert {"field": "assigned_to", "operator": "contains", "values": ["leandro montenegro machado"]} in options["prompt_filters"]
+    assert not any(
+        "adicionar" in " ".join(str(value) for value in rule.get("values", []))
+        for rule in options["prompt_filters"]
+        if rule.get("field") == "assigned_to"
+    )
+
+
 def test_ai_date_update_condition_keeps_updated_on_filter(monkeypatch):
     prompt = "Trazer demandas com data de atualizacao com mais de 7 dias. Adicionar coluna ultima atualizacao."
 
