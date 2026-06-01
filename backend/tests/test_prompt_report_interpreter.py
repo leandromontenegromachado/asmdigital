@@ -212,3 +212,16 @@ def test_resource_column_prompt_uses_assignee_without_ai(monkeypatch):
     assert {"field": "assigned_to", "operator": "contains", "values": ["leandro montenegro machado"]} in options["prompt_filters"]
     assert [column["key"] for column in options["columns"]] == ["source_ref", "subject", "assigned_to"]
     assert options["interpreter"] == "fallback"
+
+
+def test_last_update_column_prompt_uses_updated_on_without_ai(monkeypatch):
+    monkeypatch.setattr("app.services.prompt_report_service._call_prompt_interpreter_ai", lambda *args, **kwargs: None)
+    prompt = "Trazer as demandas em aberto do recurso Leandro Montenegro Machado. Adicionar uma coluna com a ultima atualizacao"
+
+    filters = _parse_prompt_filters(None, prompt, {"project_ids": ["asm-dem"]})
+    options = filters["prompt_options"]
+
+    assert filters["status_id"] == "open"
+    assert {"field": "assigned_to", "operator": "contains", "values": ["leandro montenegro machado"]} in options["prompt_filters"]
+    assert [column["key"] for column in options["columns"]] == ["source_ref", "subject", "assigned_to", "updated_on"]
+    assert options["interpreter"] == "fallback"
