@@ -126,11 +126,13 @@ PROMPT_COLUMN_CANDIDATES = [
 DEFAULT_REDMINE_COLUMNS = [
     {"key": "source_ref", "label": "ID"},
     {"key": "subject", "label": "Titulo"},
+    {"key": "status", "label": "Status"},
     {"key": "assigned_to", "label": "Atribuido para"},
     {"key": "due_date", "label": "Data prevista"},
     {"key": "updated_on", "label": "Alterado em"},
-    {"key": "status", "label": "Status"},
 ]
+
+DEFAULT_REDMINE_COLUMN_ORDER = [column["key"] for column in DEFAULT_REDMINE_COLUMNS]
 
 PROMPT_FIELD_LABELS = {key: label for key, label, _ in PROMPT_COLUMN_CANDIDATES}
 PROMPT_FIELD_LABELS["source_ref"] = "ID"
@@ -610,6 +612,8 @@ def _merge_added_columns_with_defaults(prompt_options: dict[str, Any], prompt: s
             continue
         merged.append({"key": key, "label": str(item.get("label") or PROMPT_FIELD_LABELS.get(key, key))})
         seen.add(key)
+    order = {key: index for index, key in enumerate(DEFAULT_REDMINE_COLUMN_ORDER)}
+    merged.sort(key=lambda item: (order.get(item["key"], len(order)), item["key"]))
     return {**prompt_options, "columns": merged}
 
 
