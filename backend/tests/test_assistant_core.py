@@ -576,6 +576,49 @@ def test_project_advisor_follow_up_stale_demand_query_uses_previous_redmine_cont
     assert plan.routing_metadata["context_applied"] == "project_advisor_follow_up"
 
 
+def test_project_advisor_follow_up_replans_with_ai_when_first_plan_is_generic():
+    service = AssistantCoreService(MagicMock())
+    previous = AssistantPlan(
+        intent="analyze_redmine_project",
+        domain="project_advisor",
+        action="analyze",
+        requires_confirmation=False,
+        extracted_params={"project_ids": ["asm-dem"], "read_only": True},
+        permission_required="funcionario",
+    )
+    generic_plan = AssistantPlan(
+        intent="knowledge_answer",
+        domain="general",
+        action="answer",
+        should_execute=False,
+        confidence=0.55,
+        routing_metadata={"decision": "ai"},
+    )
+    replanned = AssistantPlan(
+        intent="run_report",
+        domain="reports_redmine",
+        action="run_report",
+        should_execute=True,
+        requires_confirmation=True,
+        confidence=0.9,
+        extracted_params={"text": "Liste as demandas do Redmine sem atualizacao ha 7 dias."},
+        routing_metadata={"decision": "ai"},
+    )
+
+    with patch.object(service, "_last_contextual_plan", return_value=(previous, 151)):
+        with patch("app.assistant.service.interpret_command", return_value=replanned) as interpret_mock:
+            plan = service._replan_project_advisor_follow_up(
+                AssistantCommand(text="Quais Demandas sem atualizacao ha 7+ dias?", user_id="1", channel="web"),
+                user=MagicMock(id=1, role="gerente"),
+                plan=generic_plan,
+                combined_context="Contexto recente da conversa com riscos da analise.",
+            )
+
+    assert plan.domain == "reports_redmine"
+    assert plan.action == "run_report"
+    assert "Replanejamento contextual obrigatorio" in interpret_mock.call_args.kwargs["knowledge_context"]
+
+
 def test_internal_fallback_response_is_tagged():
     service = AssistantCoreService(MagicMock())
     plan = AssistantPlan(

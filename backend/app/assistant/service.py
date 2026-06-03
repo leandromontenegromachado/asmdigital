@@ -26,6 +26,7 @@ class AssistantCoreService:
         conversation_context = self._conversation_context(command, user)
         combined_context = self._combined_ai_context(knowledge_context, conversation_context)
         plan = interpret_command(command.text, self.db, knowledge_context=combined_context)
+        plan = self._replan_project_advisor_follow_up(command, user, plan, combined_context)
 
         pending_input = self._pending_input_action(command, user)
         if pending_input:
@@ -660,6 +661,48 @@ class AssistantCoreService:
     def _combined_ai_context(self, knowledge_context: str, conversation_context: str) -> str:
         parts = [item for item in (conversation_context, knowledge_context) if item]
         return "\n\n".join(parts)
+
+    def _replan_project_advisor_follow_up(
+        self,
+        command: AssistantCommand,
+        user: User | None,
+        plan: AssistantPlan,
+        combined_context: str,
+    ) -> AssistantPlan:
+        previous = self._last_contextual_plan(command, user)
+        if not previous:
+            return plan
+        previous_plan, _previous_log_id = previous
+        if previous_plan.domain != "project_advisor":
+            return plan
+        if plan.domain == "reports_redmine" and plan.action == "run_report":
+            return plan
+
+        routing = plan.routing_metadata or {}
+        if routing.get("decision") == "fallback" and routing.get("fallback_reason") not in {"ai_low_confidence", "ai_error", "ai_unavailable"}:
+            return plan
+
+        replan_context = "\n\n".join(
+            item
+            for item in (
+                combined_context,
+                (
+                    "Replanejamento contextual obrigatorio: a mensagem atual veio depois de uma analise "
+                    "project_advisor. Se o usuario estiver pedindo para detalhar, listar, mostrar ou consultar "
+                    "itens, sinais, riscos, grupos ou metricas citados na analise anterior, retorne "
+                    "reports_redmine/run_report com should_execute=true e extracted_params.text contendo uma "
+                    "consulta Redmine clara. Use o contexto anterior para inferir filtros e projeto. "
+                    "Se nao for uma continuacao operacional, mantenha uma resposta nao executavel apropriada."
+                ),
+            )
+            if item
+        )
+        replanned = interpret_command(command.text, self.db, knowledge_context=replan_context)
+        if replanned.domain == "reports_redmine" and replanned.action == "run_report":
+            return replanned
+        if replanned.should_execute and replanned.confidence > plan.confidence:
+            return replanned
+        return plan
 
     def _should_block_generic_knowledge_fallback(self, text: str, plan: AssistantPlan) -> bool:
         routing = plan.routing_metadata or {}
