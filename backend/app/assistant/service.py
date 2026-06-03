@@ -620,11 +620,40 @@ class AssistantCoreService:
             for key in ("open_issues", "overdue_count", "stale_count", "high_priority_count"):
                 if key in metrics:
                     summary_parts.append(f"metrics.{key}={metrics.get(key)}")
+            risks = result.get("risks") if isinstance(result.get("risks"), list) else []
+            risk_parts = []
+            for risk in risks[:4]:
+                if not isinstance(risk, dict):
+                    continue
+                title = str(risk.get("title") or "").strip()
+                severity = str(risk.get("severity") or "").strip()
+                items = risk.get("items") if isinstance(risk.get("items"), list) else []
+                item_parts = []
+                for item in items[:5]:
+                    if not isinstance(item, dict):
+                        continue
+                    item_parts.append(
+                        " ".join(
+                            part
+                            for part in (
+                                f"#{item.get('id')}" if item.get("id") else "",
+                                str(item.get("subject") or "")[:80],
+                                f"status={item.get('status')}" if item.get("status") else "",
+                                f"responsavel={item.get('assigned_to')}" if item.get("assigned_to") else "",
+                                f"prevista={item.get('due_date')}" if item.get("due_date") else "",
+                                f"atualizada={item.get('updated_on')}" if item.get("updated_on") else "",
+                            )
+                            if part
+                        )
+                    )
+                if title:
+                    risk_parts.append(f"{title} ({severity}, {len(items)} itens): " + " | ".join(item_parts))
             lines.append(
                 "- "
                 f"texto={log.text!r}; "
                 f"domain={plan.get('domain')}; action={plan.get('action')}; intent={plan.get('intent')}; "
-                f"resumo={'; '.join(summary_parts) or str(log.response_message or '')[:180]}"
+                f"resumo={'; '.join(summary_parts) or str(log.response_message or '')[:180]}; "
+                f"riscos={' || '.join(risk_parts)}"
             )
         return "\n".join(lines)
 
@@ -866,9 +895,14 @@ class AssistantCoreService:
         normalized = self._normalize_text(command.text)
         is_contextual = self._looks_contextual(normalized)
         is_redmine_follow_up = self._looks_like_redmine_follow_up(normalized)
-        if not is_contextual and plan.domain in {"reports_redmine", "reports_ai"} and plan.action == "run_report" and (plan.extracted_params or {}).get("text"):
+        is_ai_redmine_report = (
+            plan.domain == "reports_redmine"
+            and plan.action == "run_report"
+            and (plan.routing_metadata or {}).get("decision") == "ai"
+        )
+        if not is_contextual and plan.domain in {"reports_redmine", "reports_ai"} and plan.action == "run_report" and (plan.extracted_params or {}).get("text") and not is_ai_redmine_report:
             return plan
-        if not is_contextual and not is_redmine_follow_up:
+        if not is_contextual and not is_redmine_follow_up and not is_ai_redmine_report:
             return plan
 
         previous = self._last_contextual_plan(command, user)
@@ -876,40 +910,10 @@ class AssistantCoreService:
             return plan
 
         previous_plan, previous_log_id = previous
-        if previous_plan.domain == "project_advisor" and is_redmine_follow_up:
-            owner = self._owner_from_follow_up_text(command.text)
-            status = "overdue" if any(token in normalized for token in ("atraso", "atrasada", "atrasadas", "atrasado", "atrasados")) else None
-            text = command.text
-            if owner:
-                text = self._report_prompt_with_owner({"status": "em atraso" if status == "overdue" else None}, owner)
-            params = {
-                "text": text,
-                "owner": owner,
-                "status": status,
-                "context": {
-                    "source": "project_advisor_follow_up",
-                    "previous_command_log_id": previous_log_id,
-                    "previous_domain": previous_plan.domain,
-                    "previous_action": previous_plan.action,
-                    "read_only_redmine": True,
-                },
-            }
-            return AssistantPlan(
-                intent=AssistantIntent.RUN_REPORT.value,
-                domain="reports_redmine",
-                action="run_report",
-                requires_confirmation=True,
-                confidence=max(plan.confidence, 0.72),
-                extracted_params=params,
-                summary_for_user="Vou consultar as demandas do Redmine usando o contexto da analise anterior.",
-                risk_level="medium",
-                permission_required="manager",
-                routing_metadata={
-                    **(plan.routing_metadata or {}),
-                    "context_applied": "project_advisor_follow_up",
-                    "previous_command_log_id": previous_log_id,
-                },
-            )
+        if previous_plan.domain == "project_advisor":
+            if plan.domain == "reports_redmine" and plan.action == "run_report":
+                return self._attach_project_advisor_context(plan, previous_plan, previous_log_id)
+            return plan
 
         if previous_plan.domain not in {"reports_redmine", "reports_ai"}:
             return plan
@@ -984,6 +988,35 @@ class AssistantCoreService:
                 "summary_for_user": "Vou complementar a ultima consulta e preparar o relatorio para confirmacao.",
                 "extracted_params": merged,
                 "missing_params": [],
+            }
+        )
+
+    def _attach_project_advisor_context(self, plan: AssistantPlan, previous_plan: AssistantPlan, previous_log_id: int) -> AssistantPlan:
+        params = dict(plan.extracted_params or {})
+        previous_params = dict(previous_plan.extracted_params or {})
+        if previous_params.get("project_ids") and not params.get("project_ids"):
+            params["project_ids"] = previous_params["project_ids"]
+        params["context"] = {
+            **(params.get("context") if isinstance(params.get("context"), dict) else {}),
+            "source": "project_advisor_follow_up",
+            "previous_command_log_id": previous_log_id,
+            "previous_domain": previous_plan.domain,
+            "previous_action": previous_plan.action,
+            "read_only_redmine": True,
+        }
+        return plan.model_copy(
+            update={
+                "domain": "reports_redmine",
+                "action": "run_report",
+                "requires_confirmation": True,
+                "summary_for_user": plan.summary_for_user or "Vou consultar as demandas do Redmine usando o contexto da analise anterior.",
+                "extracted_params": params,
+                "missing_params": [],
+                "routing_metadata": {
+                    **(plan.routing_metadata or {}),
+                    "context_applied": "project_advisor_follow_up",
+                    "previous_command_log_id": previous_log_id,
+                },
             }
         )
 

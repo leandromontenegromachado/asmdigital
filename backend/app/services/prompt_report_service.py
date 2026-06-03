@@ -411,6 +411,7 @@ def _parse_empty_field_filters(prompt: str) -> list[dict[str, Any]]:
 def _parse_updated_age_filters(prompt: str) -> list[dict[str, Any]]:
     normalized = _normalize_prompt_text(prompt)
     patterns = [
+        r"(?:sem\s+(?:atualizacao|alteracao|movimentacao|movimento)|nao\s+(?:atualizad[ao]|alterad[ao]))[^\r\n.]{0,80}?(?:ha|hÃ¡|por|mais\s+de|maior\s+que|ha\s+mais\s+de)?\s*(\d+)\s*\+?\s*dias",
         r"(?:alterad[ao]|atualizad[ao]|data\s+de\s+atualizacao|data\s+de\s+alteracao)[^\r\n.]{0,80}?(?:mais\s+de|maior\s+que|ha\s+mais\s+de)\s*(\d+)\s+dias",
         r"(?:mais\s+de|maior\s+que|ha\s+mais\s+de)\s*(\d+)\s+dias[^\r\n.]{0,80}?(?:alterad[ao]|atualizad[ao]|data\s+de\s+atualizacao|data\s+de\s+alteracao)",
     ]

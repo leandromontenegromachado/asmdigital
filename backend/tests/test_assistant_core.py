@@ -1,5 +1,6 @@
 ﻿from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
+from datetime import date, timedelta
 import pytest
 
 from app.assistant.actions.base import ActionResult
@@ -503,7 +504,19 @@ def test_project_advisor_follow_up_demand_query_uses_previous_redmine_context():
         extracted_params={"project_ids": ["asm-dem"], "read_only": True},
         permission_required="funcionario",
     )
-    current = AssistantPlan(confidence=0.2)
+    current = AssistantPlan(
+        intent="run_report",
+        domain="reports_redmine",
+        action="run_report",
+        requires_confirmation=True,
+        confidence=0.92,
+        extracted_params={
+            "text": "Liste as demandas do Redmine em atraso do responsavel leandro montenegro machado.",
+            "owner": "leandro montenegro machado",
+            "status": "overdue",
+        },
+        routing_metadata={"decision": "ai"},
+    )
 
     with patch.object(service, "_last_contextual_plan", return_value=(previous, 150)):
         plan = service._apply_conversation_context(
@@ -517,6 +530,48 @@ def test_project_advisor_follow_up_demand_query_uses_previous_redmine_context():
     assert plan.requires_confirmation is True
     assert plan.extracted_params["owner"] == "leandro montenegro machado"
     assert plan.extracted_params["status"] == "overdue"
+    assert plan.extracted_params["project_ids"] == ["asm-dem"]
+    assert plan.extracted_params["context"]["source"] == "project_advisor_follow_up"
+    assert plan.routing_metadata["context_applied"] == "project_advisor_follow_up"
+
+
+def test_project_advisor_follow_up_stale_demand_query_uses_previous_redmine_context():
+    service = AssistantCoreService(MagicMock())
+    previous = AssistantPlan(
+        intent="analyze_redmine_project",
+        domain="project_advisor",
+        action="analyze",
+        requires_confirmation=False,
+        extracted_params={"project_ids": ["asm-dem"], "read_only": True},
+        permission_required="funcionario",
+    )
+    current = AssistantPlan(
+        intent="run_report",
+        domain="reports_redmine",
+        action="run_report",
+        requires_confirmation=True,
+        confidence=0.9,
+        extracted_params={
+            "text": "Liste as demandas do Redmine sem atualizacao ha 7 dias.",
+            "days_stale": 7,
+            "risk_title": "Demandas sem atualizacao ha 7+ dias",
+        },
+        routing_metadata={"decision": "ai"},
+    )
+
+    with patch.object(service, "_last_contextual_plan", return_value=(previous, 151)):
+        plan = service._apply_conversation_context(
+            AssistantCommand(text="Quais Demandas sem atualizacao ha 7+ dias?", user_id="1", channel="web"),
+            current,
+            user=MagicMock(id=1, role="gerente"),
+        )
+
+    assert plan.domain == "reports_redmine"
+    assert plan.action == "run_report"
+    assert plan.requires_confirmation is True
+    assert plan.extracted_params["days_stale"] == 7
+    assert plan.extracted_params["text"] == "Liste as demandas do Redmine sem atualizacao ha 7 dias."
+    assert plan.extracted_params["project_ids"] == ["asm-dem"]
     assert plan.extracted_params["context"]["source"] == "project_advisor_follow_up"
     assert plan.routing_metadata["context_applied"] == "project_advisor_follow_up"
 
@@ -719,6 +774,18 @@ def test_prompt_report_simple_overdue_assignee_query_does_not_call_ai_interprete
     ai_mock.assert_not_called()
     assert filters["prompt_options"]["overdue_only"] is True
     assert {"field": "assigned_to", "operator": "contains", "values": ["leandro montenegro machado"]} in filters["prompt_options"]["prompt_filters"]
+
+
+def test_prompt_report_simple_stale_query_does_not_call_ai_interpreter():
+    prompt = "Liste as demandas do Redmine sem atualizacao ha 7 dias."
+
+    with patch("app.services.prompt_report_service._call_prompt_interpreter_ai") as ai_mock:
+        filters = _parse_prompt_filters(MagicMock(), prompt, {"project_ids": ["asm-dem"], "status_id": None})
+
+    ai_mock.assert_not_called()
+    expected_threshold = (date.today() - timedelta(days=7)).isoformat()
+    assert {"field": "updated_on", "operator": "lt", "value": expected_threshold} in filters["prompt_options"]["prompt_filters"]
+    assert filters["prompt_options"]["ignore_date_filter"] is True
 
 
 def test_reports_action_builds_deterministic_prompt_from_status_and_owner():
