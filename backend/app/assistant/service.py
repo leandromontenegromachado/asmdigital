@@ -23,7 +23,9 @@ class AssistantCoreService:
 
     def process_command(self, command: AssistantCommand, user: User | None = None) -> AssistantResponse:
         knowledge_context = self._knowledge_context(command.text)
-        plan = interpret_command(command.text, self.db, knowledge_context=knowledge_context)
+        conversation_context = self._conversation_context(command, user)
+        combined_context = self._combined_ai_context(knowledge_context, conversation_context)
+        plan = interpret_command(command.text, self.db, knowledge_context=combined_context)
 
         pending_input = self._pending_input_action(command, user)
         if pending_input:
@@ -52,6 +54,22 @@ class AssistantCoreService:
         plan = self._complete_plan(plan, command.text)
         if not plan.should_execute:
             response = self._response_from_non_executable_plan(command, plan, user)
+            self._log(command, response, plan, result=response.data)
+            return response
+        if self._should_block_generic_knowledge_fallback(command.text, plan):
+            response = AssistantResponse(
+                success=False,
+                intent=plan.intent,
+                domain=plan.domain,
+                action=plan.action,
+                message=(
+                    "Nao consegui acionar o orquestrador de IA agora para interpretar essa consulta operacional. "
+                    "Tente novamente em alguns instantes."
+                ),
+                preview=self._preview_from_plan(plan),
+                data={"source": "internal_fallback", "routing_metadata": plan.routing_metadata},
+                errors=["orchestrator_unavailable"],
+            )
             self._log(command, response, plan, result=response.data)
             return response
         knowledge_response = self._knowledge_response(command, plan, user)
@@ -578,6 +596,65 @@ class AssistantCoreService:
         except Exception:
             return ""
 
+    def _conversation_context(self, command: AssistantCommand, user: User | None) -> str:
+        if self._db_is_mock():
+            return ""
+        user_id = command.user_id or (str(user.id) if user else None)
+        query = self.db.query(AssistantCommandLog).filter(AssistantCommandLog.channel == command.channel)
+        if user_id:
+            query = query.filter(AssistantCommandLog.user_id == str(user_id))
+        logs = query.order_by(AssistantCommandLog.created_at.desc()).limit(5).all()
+        if not logs:
+            return ""
+
+        lines = ["Contexto recente da conversa, use apenas para resolver referencias e escopo:"]
+        for log in reversed(logs):
+            raw = log.raw_payload_json or {}
+            plan = raw.get("plan") if isinstance(raw.get("plan"), dict) else {}
+            result = raw.get("result") if isinstance(raw.get("result"), dict) else {}
+            summary_parts = []
+            for key in ("agent", "project_ids", "status", "score", "total", "report_id", "read_only"):
+                if key in result:
+                    summary_parts.append(f"{key}={result.get(key)}")
+            metrics = result.get("metrics") if isinstance(result.get("metrics"), dict) else {}
+            for key in ("open_issues", "overdue_count", "stale_count", "high_priority_count"):
+                if key in metrics:
+                    summary_parts.append(f"metrics.{key}={metrics.get(key)}")
+            lines.append(
+                "- "
+                f"texto={log.text!r}; "
+                f"domain={plan.get('domain')}; action={plan.get('action')}; intent={plan.get('intent')}; "
+                f"resumo={'; '.join(summary_parts) or str(log.response_message or '')[:180]}"
+            )
+        return "\n".join(lines)
+
+    def _combined_ai_context(self, knowledge_context: str, conversation_context: str) -> str:
+        parts = [item for item in (conversation_context, knowledge_context) if item]
+        return "\n\n".join(parts)
+
+    def _should_block_generic_knowledge_fallback(self, text: str, plan: AssistantPlan) -> bool:
+        routing = plan.routing_metadata or {}
+        if routing.get("decision") != "fallback" or not routing.get("fallback_reason"):
+            return False
+        if plan.intent != AssistantIntent.UNKNOWN.value or plan.domain != "general":
+            return False
+        normalized = self._normalize_text(text)
+        operational_terms = (
+            "demanda",
+            "demandas",
+            "redmine",
+            "projeto",
+            "projetos",
+            "risco",
+            "riscos",
+            "atraso",
+            "atrasada",
+            "atrasadas",
+            "responsavel",
+            "responsavel",
+        )
+        return any(term in normalized for term in operational_terms)
+
     def _response_from_non_executable_plan(self, command: AssistantCommand, plan: AssistantPlan, user: User | None) -> AssistantResponse:
         message = (plan.answer_to_user or "").strip()
         data: dict[str, Any] = {"message_type": plan.message_type}
@@ -750,7 +827,7 @@ class AssistantCoreService:
             )
         if any(word in normalized_text for word in ("relatorio", "relatorios", "redmine", "demandas")):
             return (
-                "Sim, posso consultar relatorios e preparar execucoes de relatorios Redmine ou IA. Consultas simples podem responder direto; uma nova execucao de relatorio pede confirmacao."
+                "Sim, posso consultar dados do Redmine em modo somente leitura pelo agente consultivo, consultar relatorios existentes e preparar execucoes de relatorios Redmine ou IA. Uma nova execucao de relatorio pede confirmacao."
             )
         if any(word in normalized_text for word in ("avaliacao 360", "avaliação 360", "360")):
             return (
@@ -788,7 +865,10 @@ class AssistantCoreService:
     def _apply_conversation_context(self, command: AssistantCommand, plan: AssistantPlan, user: User | None) -> AssistantPlan:
         normalized = self._normalize_text(command.text)
         is_contextual = self._looks_contextual(normalized)
-        if not is_contextual:
+        is_redmine_follow_up = self._looks_like_redmine_follow_up(normalized)
+        if not is_contextual and plan.domain in {"reports_redmine", "reports_ai"} and plan.action == "run_report" and (plan.extracted_params or {}).get("text"):
+            return plan
+        if not is_contextual and not is_redmine_follow_up:
             return plan
 
         previous = self._last_contextual_plan(command, user)
@@ -796,6 +876,41 @@ class AssistantCoreService:
             return plan
 
         previous_plan, previous_log_id = previous
+        if previous_plan.domain == "project_advisor" and is_redmine_follow_up:
+            owner = self._owner_from_follow_up_text(command.text)
+            status = "overdue" if any(token in normalized for token in ("atraso", "atrasada", "atrasadas", "atrasado", "atrasados")) else None
+            text = command.text
+            if owner:
+                text = self._report_prompt_with_owner({"status": "em atraso" if status == "overdue" else None}, owner)
+            params = {
+                "text": text,
+                "owner": owner,
+                "status": status,
+                "context": {
+                    "source": "project_advisor_follow_up",
+                    "previous_command_log_id": previous_log_id,
+                    "previous_domain": previous_plan.domain,
+                    "previous_action": previous_plan.action,
+                    "read_only_redmine": True,
+                },
+            }
+            return AssistantPlan(
+                intent=AssistantIntent.RUN_REPORT.value,
+                domain="reports_redmine",
+                action="run_report",
+                requires_confirmation=True,
+                confidence=max(plan.confidence, 0.72),
+                extracted_params=params,
+                summary_for_user="Vou consultar as demandas do Redmine usando o contexto da analise anterior.",
+                risk_level="medium",
+                permission_required="manager",
+                routing_metadata={
+                    **(plan.routing_metadata or {}),
+                    "context_applied": "project_advisor_follow_up",
+                    "previous_command_log_id": previous_log_id,
+                },
+            )
+
         if previous_plan.domain not in {"reports_redmine", "reports_ai"}:
             return plan
 
@@ -914,6 +1029,37 @@ class AssistantCoreService:
         )
         return any(marker in normalized_text for marker in markers)
 
+    def _looks_like_redmine_follow_up(self, normalized_text: str) -> bool:
+        demand_markers = ("demanda", "demandas", "chamado", "chamados")
+        redmine_context_markers = (
+            "atraso",
+            "atrasada",
+            "atrasadas",
+            "atrasado",
+            "atrasados",
+            "responsavel",
+            "atribuido",
+            "leandro",
+            "em aberto",
+            "aberta",
+            "abertas",
+        )
+        return any(marker in normalized_text for marker in demand_markers) and any(marker in normalized_text for marker in redmine_context_markers)
+
+    def _owner_from_follow_up_text(self, text: str) -> str | None:
+        patterns = [
+            r"\b(?:do|da|de)\s+([A-Za-zÀ-ÿ][A-Za-zÀ-ÿ\s'.-]{2,})\s*\??$",
+            r"\b(?:respons[aá]vel|atribu[ií]do para|usuario|usu[aá]rio)\s+([A-Za-zÀ-ÿ][A-Za-zÀ-ÿ\s'.-]{2,})",
+        ]
+        ignored = {"meu setor", "setor", "redmine", "projeto", "projetos"}
+        for pattern in patterns:
+            match = re.search(pattern, text, flags=re.IGNORECASE)
+            if match:
+                owner = match.group(1).strip(" .?")
+                if self._normalize_text(owner) not in ignored:
+                    return owner[:120]
+        return None
+
     def _corrected_owner(self, text: str) -> str | None:
         patterns = [
             r"(?:nome|respons[aá]vel|usuario|usu[aá]rio)\s+(?:correto\s+)?(?:e|é|eh)\s+(.+)$",
@@ -957,6 +1103,7 @@ class AssistantCoreService:
         plan: AssistantPlan,
         result: dict[str, Any] | None = None,
     ) -> None:
+        self._annotate_response_source(response, plan)
         self.db.add(
             AssistantCommandLog(
                 user_id=command.user_id,
@@ -979,3 +1126,25 @@ class AssistantCoreService:
             )
         )
         self.db.commit()
+
+    def _annotate_response_source(self, response: AssistantResponse, plan: AssistantPlan) -> None:
+        routing = plan.routing_metadata or {}
+        decision = routing.get("decision")
+        if decision == "ai":
+            response.data = {
+                **(response.data or {}),
+                "response_source": "ai",
+                "response_source_label": "Resposta da IA",
+            }
+            return
+        if not routing:
+            return
+        label = "Resposta dos internos"
+        response.data = {
+            **(response.data or {}),
+            "response_source": "internal",
+            "response_source_label": label,
+            "routing_fallback_reason": routing.get("fallback_reason") or routing.get("reason"),
+        }
+        if response.message and not response.message.startswith(f"[{label}]"):
+            response.message = f"[{label}]\n\n{response.message}"

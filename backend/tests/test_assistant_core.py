@@ -3,8 +3,9 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from app.assistant.actions.base import ActionResult
-from app.assistant.intent_router import AssistantIntent, _normalize_plan, detect_intent, deterministic_plan
-from app.assistant.schemas import AssistantCommand, AssistantPlan
+from app.assistant.actions.reports import ReportsAction
+from app.assistant.intent_router import AssistantIntent, _normalize_plan, detect_intent, deterministic_plan, interpret_command
+from app.assistant.schemas import AssistantCommand, AssistantPlan, AssistantResponse
 from app.assistant.service import AssistantCoreService
 from app.services.prompt_report_service import PromptInterpretationError, _connector_scoped_project_ids, _parse_prompt_filters
 
@@ -91,6 +92,185 @@ def test_ai_meeting_schedule_alias_uses_legacy_meeting_flow():
     assert plan.intent == "create_meeting"
     assert plan.domain == "meetings"
     assert plan.action == "create"
+
+
+def test_ai_project_advisor_alias_is_normalized():
+    plan = _normalize_plan(
+        AssistantPlan(
+            intent="consult_redmine_projects",
+            domain="project_advisor",
+            action="query_redmine_projects",
+            confidence=0.9,
+            extracted_params={"project_id": None},
+        )
+    )
+
+    assert plan.intent == "analyze_redmine_project"
+    assert plan.domain == "project_advisor"
+    assert plan.action == "analyze"
+    assert plan.requires_confirmation is False
+    assert plan.extracted_params["requested_action"] == "query_redmine_projects"
+
+
+def test_interpret_command_uses_assistant_orchestrator_model():
+    db = MagicMock()
+    model = SimpleNamespace(api_key="secret", provider="google_gemini", model_id="gemini-test")
+    raw_plan = (
+        '{"message_type":"action_request","should_execute":true,"answer_to_user":null,'
+        '"intent":"consult_redmine_projects","domain":"project_advisor","action":"query_redmine_projects",'
+        '"requires_confirmation":false,"confidence":0.91,"extracted_params":{"project_id":null},'
+        '"missing_params":[],"summary_for_user":"Vou consultar os projetos no Redmine.",'
+        '"risk_level":"low","permission_required":"funcionario"}'
+    )
+
+    with patch("app.assistant.intent_router.resolve_ai_model", return_value=model) as resolve_mock:
+        with patch("app.assistant.intent_router.generate_ai_text", return_value=raw_plan):
+            plan = interpret_command("consulte os projetos no redmine", db)
+
+    resolve_mock.assert_called_once_with(db, "assistant_orchestrator")
+    assert plan.domain == "project_advisor"
+    assert plan.action == "analyze"
+    assert plan.requires_confirmation is False
+    assert plan.routing_metadata["decision"] == "ai"
+    assert plan.routing_metadata["feature_key"] == "assistant_orchestrator"
+    assert plan.routing_metadata["raw_response"] == raw_plan
+
+
+def test_orchestrator_interprets_project_risk_request_without_deterministic_case():
+    db = MagicMock()
+    model = SimpleNamespace(api_key="secret", provider="google_gemini", model_id="gemini-test", name="Gemini Test")
+    raw_plan = (
+        '{"message_type":"action_request","should_execute":true,"answer_to_user":null,'
+        '"intent":"analyze_redmine_project","domain":"project_advisor","action":"analyze",'
+        '"requires_confirmation":false,"confidence":0.92,'
+        '"extracted_params":{"project_id":null,"scope":"meu_setor","analysis":"risks"},'
+        '"missing_params":[],"summary_for_user":"Vou analisar os riscos dos projetos do seu setor.",'
+        '"risk_level":"low","permission_required":"funcionario"}'
+    )
+
+    with patch("app.assistant.intent_router.resolve_ai_model", return_value=model):
+        with patch("app.assistant.intent_router.generate_ai_text", return_value=raw_plan):
+            plan = interpret_command("pode analisar os riscos dos projetos do meu setor ?", db)
+
+    assert plan.domain == "project_advisor"
+    assert plan.action == "analyze"
+    assert plan.should_execute is True
+    assert plan.requires_confirmation is False
+    assert plan.extracted_params["scope"] == "meu_setor"
+    assert plan.routing_metadata["decision"] == "ai"
+
+
+def test_orchestrator_interprets_real_redmine_department_risk_request():
+    db = MagicMock()
+    model = SimpleNamespace(api_key="secret", provider="google_gemini", model_id="gemini-test", name="Gemini Test")
+    raw_plan = (
+        '{"message_type":"action_request","should_execute":true,"answer_to_user":null,'
+        '"intent":"analyze_redmine_project","domain":"project_advisor","action":"analyze",'
+        '"requires_confirmation":false,"confidence":0.94,'
+        '"extracted_params":{"project_id":null,"scope":"meu_setor","analysis":"risk"},'
+        '"missing_params":[],"summary_for_user":"Vou fazer uma analise de risco dos projetos Redmine do seu setor.",'
+        '"risk_level":"low","permission_required":"funcionario"}'
+    )
+
+    with patch("app.assistant.intent_router.resolve_ai_model", return_value=model):
+        with patch("app.assistant.intent_router.generate_ai_text", return_value=raw_plan):
+            plan = interpret_command("Pode fazer uma analise de risco dos projetos do redmine do meu setor", db)
+
+    assert plan.domain == "project_advisor"
+    assert plan.action == "analyze"
+    assert plan.requires_confirmation is False
+    assert plan.extracted_params["read_only"] is True
+    assert plan.extracted_params["read_only_enforced"] is True
+    assert plan.routing_metadata["decision"] == "ai"
+
+
+def test_orchestrator_sanitizes_invalid_permission_required():
+    db = MagicMock()
+    model = SimpleNamespace(api_key="secret", provider="google_gemini", model_id="gemini-test", name="Gemini Test")
+    raw_plan = (
+        '{"message_type":"action_request","should_execute":true,"answer_to_user":null,'
+        '"intent":"analyze_redmine_project","domain":"project_advisor","action":"analyze",'
+        '"requires_confirmation":false,"confidence":0.94,'
+        '"extracted_params":{"scope":"setor","analysis":"risk"},'
+        '"missing_params":[],"summary_for_user":"Vou analisar os riscos.",'
+        '"risk_level":"low","permission_required":null}'
+    )
+
+    with patch("app.assistant.intent_router.resolve_ai_model", return_value=model):
+        with patch("app.assistant.intent_router.generate_ai_text", return_value=raw_plan):
+            plan = interpret_command("Pode fazer uma analise de risco dos projetos do redmine do meu setor", db)
+
+    assert plan.domain == "project_advisor"
+    assert plan.action == "analyze"
+    assert plan.permission_required == "funcionario"
+    assert plan.routing_metadata["decision"] == "ai"
+
+
+def test_project_advisor_is_forced_to_read_only_when_model_returns_write_action():
+    plan = _normalize_plan(
+        AssistantPlan(
+            intent="update_redmine_project",
+            domain="project_advisor",
+            action="update",
+            requires_confirmation=True,
+            confidence=0.9,
+            extracted_params={"project_id": "asm-dem", "status": "closed"},
+            risk_level="high",
+            permission_required="manager",
+        )
+    )
+
+    assert plan.intent == "analyze_redmine_project"
+    assert plan.domain == "project_advisor"
+    assert plan.action == "analyze"
+    assert plan.requires_confirmation is False
+    assert plan.risk_level == "low"
+    assert plan.permission_required == "funcionario"
+    assert plan.extracted_params["requested_action"] == "update"
+    assert plan.extracted_params["read_only"] is True
+    assert plan.extracted_params["read_only_enforced"] is True
+
+
+def test_project_advisor_capability_question_stays_non_executable():
+    plan = _normalize_plan(
+        AssistantPlan(
+            message_type="capability_question",
+            should_execute=False,
+            intent="capability_question",
+            domain="project_advisor",
+            action="answer",
+            confidence=0.9,
+            answer_to_user="Sim, existe um agente consultivo.",
+        )
+    )
+
+    assert plan.domain == "project_advisor"
+    assert plan.action == "answer"
+    assert plan.should_execute is False
+    assert plan.requires_confirmation is False
+    assert plan.extracted_params == {}
+
+
+def test_interpret_command_logs_fallback_reason_when_orchestrator_has_low_confidence():
+    db = MagicMock()
+    model = SimpleNamespace(api_key="secret", provider="google_gemini", model_id="gemini-test", name="Gemini Test")
+    raw_plan = (
+        '{"message_type":"unknown","should_execute":false,"answer_to_user":null,'
+        '"intent":"unknown","domain":"general","action":"unknown",'
+        '"requires_confirmation":false,"confidence":0.2,"extracted_params":{},'
+        '"missing_params":[],"summary_for_user":"Nao entendi o pedido.",'
+        '"risk_level":"low","permission_required":"funcionario"}'
+    )
+
+    with patch("app.assistant.intent_router.resolve_ai_model", return_value=model):
+        with patch("app.assistant.intent_router.generate_ai_text", return_value=raw_plan):
+            plan = interpret_command("listar projetos em atraso", db)
+
+    assert plan.domain == "reports_redmine"
+    assert plan.action == "list_late_projects"
+    assert plan.routing_metadata["decision"] == "fallback"
+    assert plan.routing_metadata["fallback_reason"] == "ai_low_confidence"
+    assert plan.routing_metadata["ai_plan"]["confidence"] == 0.2
 
 
 def test_capability_question_about_meeting_does_not_execute_schedule():
@@ -313,6 +493,51 @@ def test_complete_report_request_does_not_inherit_previous_text_without_context_
     assert "context" not in plan.extracted_params
 
 
+def test_project_advisor_follow_up_demand_query_uses_previous_redmine_context():
+    service = AssistantCoreService(MagicMock())
+    previous = AssistantPlan(
+        intent="analyze_redmine_project",
+        domain="project_advisor",
+        action="analyze",
+        requires_confirmation=False,
+        extracted_params={"project_ids": ["asm-dem"], "read_only": True},
+        permission_required="funcionario",
+    )
+    current = AssistantPlan(confidence=0.2)
+
+    with patch.object(service, "_last_contextual_plan", return_value=(previous, 150)):
+        plan = service._apply_conversation_context(
+            AssistantCommand(text="tem alguma demanda em atraso do leandro montenegro machado ?", user_id="1", channel="web"),
+            current,
+            user=MagicMock(id=1, role="gerente"),
+        )
+
+    assert plan.domain == "reports_redmine"
+    assert plan.action == "run_report"
+    assert plan.requires_confirmation is True
+    assert plan.extracted_params["owner"] == "leandro montenegro machado"
+    assert plan.extracted_params["status"] == "overdue"
+    assert plan.extracted_params["context"]["source"] == "project_advisor_follow_up"
+    assert plan.routing_metadata["context_applied"] == "project_advisor_follow_up"
+
+
+def test_internal_fallback_response_is_tagged():
+    service = AssistantCoreService(MagicMock())
+    plan = AssistantPlan(
+        intent="unknown",
+        domain="general",
+        action="unknown",
+        routing_metadata={"decision": "fallback", "fallback_reason": "ai_error"},
+    )
+    response = AssistantResponse(success=True, message="Resposta local.", requires_confirmation=False)
+
+    service._annotate_response_source(response, plan)
+
+    assert response.message.startswith("[Resposta dos internos]")
+    assert response.data["response_source"] == "internal"
+    assert response.data["routing_fallback_reason"] == "ai_error"
+
+
 def test_process_read_only_action_executes_without_confirmation():
     db = MagicMock()
     service = AssistantCoreService(db)
@@ -475,6 +700,40 @@ def test_prompt_report_drops_spurious_subject_filter_from_ai_plan():
     assert not any(item.get("field") == "subject" and item.get("values") == ["que estao"] for item in prompt_filters)
 
 
+def test_prompt_report_simple_overdue_query_does_not_call_ai_interpreter():
+    with patch("app.services.prompt_report_service._call_prompt_interpreter_ai") as ai_mock:
+        filters = _parse_prompt_filters(MagicMock(), "quais as demandas atrasadas", {"project_ids": ["asm-dem"], "status_id": None})
+
+    ai_mock.assert_not_called()
+    assert filters["prompt_options"]["interpreter"] == "fallback"
+    assert filters["prompt_options"]["overdue_only"] is True
+    assert filters["prompt_options"]["ignore_date_filter"] is True
+
+
+def test_prompt_report_simple_overdue_assignee_query_does_not_call_ai_interpreter():
+    prompt = "Liste as demandas do Redmine em atraso do responsavel leandro montenegro machado."
+
+    with patch("app.services.prompt_report_service._call_prompt_interpreter_ai") as ai_mock:
+        filters = _parse_prompt_filters(MagicMock(), prompt, {"project_ids": ["asm-dem"], "status_id": None})
+
+    ai_mock.assert_not_called()
+    assert filters["prompt_options"]["overdue_only"] is True
+    assert {"field": "assigned_to", "operator": "contains", "values": ["leandro montenegro machado"]} in filters["prompt_options"]["prompt_filters"]
+
+
+def test_reports_action_builds_deterministic_prompt_from_status_and_owner():
+    plan = AssistantPlan(
+        intent="run_report",
+        domain="reports_redmine",
+        action="run_report",
+        extracted_params={"owner": "leandro montenegro machado", "status": "overdue"},
+    )
+
+    assert ReportsAction()._prompt_from_params(plan, plan.extracted_params) == (
+        "Liste as demandas do Redmine em atraso do responsavel leandro montenegro machado."
+    )
+
+
 def test_prompt_report_projects_are_limited_to_connector_scope():
     connector = SimpleNamespace(config_json={"project_ids": ["asm-dem"]})
 
@@ -491,6 +750,24 @@ def test_project_advisor_command_is_read_only():
     assert plan.action == "analyze"
     assert plan.requires_confirmation is False
     assert plan.extracted_params["project_id"] == "asm-dem"
+
+
+def test_redmine_agent_project_query_routes_to_project_advisor():
+    plan = deterministic_plan("nao quero uma execucao de relatorio, eu quero que o agente do redmine consulte os projetos")
+
+    assert plan.intent == "analyze_redmine_project"
+    assert plan.domain == "project_advisor"
+    assert plan.action == "analyze"
+    assert plan.requires_confirmation is False
+    assert plan.missing_params == []
+
+
+def test_redmine_project_query_is_not_report_list():
+    plan = deterministic_plan("pode consultar os projetos no redmine?")
+
+    assert plan.domain == "project_advisor"
+    assert plan.action == "analyze"
+    assert plan.domain != "reports_ai"
 
 
 def test_project_advisor_missing_project_requests_input():

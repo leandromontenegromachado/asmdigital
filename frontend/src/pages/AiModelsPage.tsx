@@ -310,7 +310,7 @@ const AiModelsPage: React.FC = () => {
                 <div>
                   <h2 className="text-xl font-black text-slate-900">Uso por funcionalidade</h2>
                   <p className="text-sm text-slate-500">
-                    Escolha modelos diferentes para relatorios, avaliacao e ChefIA.
+                    Escolha modelos diferentes para relatorios, avaliacao, ChefIA, assistente e orquestrador.
                   </p>
                 </div>
               </div>

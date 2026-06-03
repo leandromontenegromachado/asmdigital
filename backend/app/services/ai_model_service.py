@@ -17,6 +17,7 @@ AI_MODEL_FEATURES: dict[str, str] = {
     "evaluation": "Avaliacao e relatorios 360",
     "chefia": "ChefIA",
     "assistant": "Assistente de Gestao",
+    "assistant_orchestrator": "Orquestrador do Assistente",
 }
 
 SUPPORTED_PROVIDERS: dict[str, str] = {

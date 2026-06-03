@@ -88,19 +88,40 @@ MEETING_CREATE_ACTION_ALIASES = {
     "agendar",
 }
 
+PROJECT_ADVISOR_ACTION_ALIASES = {
+    "analyze",
+    "analyze_project",
+    "analyze_projects",
+    "consult",
+    "consult_project",
+    "consult_projects",
+    "list_projects",
+    "query_project",
+    "query_projects",
+    "query_redmine_project",
+    "query_redmine_projects",
+    "consult_redmine_project",
+    "consult_redmine_projects",
+}
+
 
 def interpret_command(text: str, db: Session | None = None, knowledge_context: str | None = None) -> AssistantPlan:
     fallback = deterministic_plan(text)
-    if fallback.domain == "project_advisor" and fallback.action == "analyze":
-        return fallback
 
-    ai_plan = _interpret_with_ai(text, db, knowledge_context=knowledge_context)
+    ai_plan, routing_metadata = _interpret_with_ai(text, db, knowledge_context=knowledge_context)
     if ai_plan and ai_plan.confidence >= 0.65:
         normalized_ai_plan = _normalize_plan(ai_plan)
-        if normalized_ai_plan.domain == "reports_redmine" and fallback.domain == "project_advisor":
-            return fallback
-        return normalized_ai_plan
-    return fallback
+        return _with_routing_metadata(normalized_ai_plan, {**routing_metadata, "decision": "ai"})
+
+    fallback_reason = "ai_low_confidence" if ai_plan else routing_metadata.get("reason") or "ai_unavailable"
+    fallback_metadata = {
+        **routing_metadata,
+        "decision": "fallback",
+        "fallback_reason": fallback_reason,
+    }
+    if ai_plan:
+        fallback_metadata["ai_plan"] = ai_plan.model_dump()
+    return _with_routing_metadata(fallback, fallback_metadata)
 
 
 def detect_intent(text: str) -> AssistantIntent:
@@ -274,6 +295,10 @@ def deterministic_plan(text: str) -> AssistantPlan:
 
     if _looks_like_project_advisor_request(normalized):
         project_id = _project_id_from_advisor_text(text)
+        is_project_collection = _looks_like_project_collection_request(normalized)
+        if is_project_collection:
+            project_id = None
+        missing_params = [] if is_project_collection else ([] if project_id else ["project_id"])
         return AssistantPlan(
             intent=AssistantIntent.ANALYZE_REDMINE_PROJECT.value,
             domain="project_advisor",
@@ -281,7 +306,7 @@ def deterministic_plan(text: str) -> AssistantPlan:
             requires_confirmation=False,
             confidence=0.86,
             extracted_params={"project_id": project_id, "days_stale": _days_stale_from_text(text)},
-            missing_params=[] if project_id else ["project_id"],
+            missing_params=missing_params,
             summary_for_user="Vou avaliar o projeto no Redmine em modo somente leitura.",
             permission_required="funcionario",
         )
@@ -343,11 +368,23 @@ def deterministic_plan(text: str) -> AssistantPlan:
     return AssistantPlan(confidence=0.2)
 
 
-def _interpret_with_ai(text: str, db: Session | None, knowledge_context: str | None = None) -> AssistantPlan | None:
+def _interpret_with_ai(text: str, db: Session | None, knowledge_context: str | None = None) -> tuple[AssistantPlan | None, dict[str, Any]]:
+    metadata: dict[str, Any] = {
+        "source": "assistant_orchestrator",
+        "feature_key": "assistant_orchestrator",
+    }
     try:
-        model = resolve_ai_model(db, "assistant")
+        model = resolve_ai_model(db, "assistant_orchestrator")
+        metadata.update(
+            {
+                "model_name": getattr(model, "name", None),
+                "provider": getattr(model, "provider", None),
+                "model_id": getattr(model, "model_id", None),
+            }
+        )
         if not isinstance(model.api_key, str) or not model.api_key.strip():
-            return None
+            metadata["reason"] = "missing_api_key"
+            return None, metadata
         raw = generate_ai_text(
             model,
             system_instruction=(
@@ -355,28 +392,63 @@ def _interpret_with_ai(text: str, db: Session | None, knowledge_context: str | N
                 "Campos obrigatorios: message_type, should_execute, answer_to_user, intent, domain, action, "
                 "requires_confirmation, confidence, extracted_params, missing_params, summary_for_user, "
                 "risk_level, permission_required. "
+                "Mantenha valores curtos. answer_to_user deve ser null quando should_execute=true. "
+                "summary_for_user deve ter no maximo uma frase curta. extracted_params deve conter apenas parametros objetivos. "
                 "message_type deve ser um de: greeting, system_question, capability_question, knowledge_question, "
                 "read_query, action_request, action_correction, confirmation, cancellation, unknown. "
                 "should_execute=false para saudacoes, perguntas, duvidas, perguntas de capacidade como 'consegue...', "
                 "'voce pode...', 'como faco...', ou conversas sem pedido claro de executar. Nesses casos preencha "
                 "answer_to_user com uma resposta util e curta. "
-                "should_execute=true apenas quando o usuario pedir explicitamente para executar, consultar, criar, "
-                "enviar, resolver, agendar, listar ou rodar uma funcionalidade do sistema. "
+                "should_execute=true quando o usuario pedir o resultado de uma acao ou consulta operacional. "
+                "Pedidos na forma 'pode fazer', 'pode analisar', 'pode consultar', 'pode verificar' ou equivalente, "
+                "seguidos de um objeto de negocio concreto, devem ser action_request e should_execute=true. "
+                "Perguntas sobre capacidade, como se o sistema tem ou consegue fazer algo em geral, devem ser "
+                "capability_question e should_execute=false. "
                 "Dominios validos: reports_ai, reports_redmine, project_advisor, routines, notifications, employees, "
                 "management_events, pending_items, evaluation, chefia, connectors, meetings, general. "
+                "Escolha domain e action pela intencao, nao por palavra-chave isolada. "
+                "Use project_advisor/analyze para consulta, verificacao ou analise somente leitura de projetos Redmine, "
+                "incluindo analise de risco, saude, diagnostico, sinais de atraso, demandas sem atualizacao e prioridades. "
+                "O project_advisor nunca pode criar, editar, comentar, atribuir, fechar ou alterar demandas no Redmine. "
+                "Use reports_redmine/run_report quando o usuario pedir gerar, executar ou criar uma nova consulta/relatorio "
+                "de demandas Redmine que produza uma execucao de relatorio. "
+                "Use reports_ai/list apenas quando o usuario pedir relatorios recentes, historico ou relatorios existentes. "
+                "Se o usuario negar relatorio e pedir agente Redmine ou consulta de projetos, prefira project_advisor/analyze. "
+                "Consultas somente leitura devem ter requires_confirmation=false. "
                 "Marque requires_confirmation=true para qualquer acao que altere dados ou dispare efeitos externos. "
                 "Use a base de conhecimento fornecida para escolher melhor dominio e acao, mas nunca invente execucao fora dos dominios validos."
             ),
             prompt=json.dumps({"text": text, "knowledge_context": knowledge_context or ""}, ensure_ascii=False),
             json_response=True,
-            max_tokens=900,
+            max_tokens=1800,
         )
+        metadata["raw_response"] = raw
         parsed = json.loads(raw)
         if isinstance(parsed, dict):
-            return AssistantPlan(**parsed)
-    except Exception:
-        return None
-    return None
+            parsed = _sanitize_ai_plan_payload(parsed)
+            plan = AssistantPlan(**parsed)
+            metadata["confidence"] = plan.confidence
+            return plan, metadata
+        metadata["reason"] = "invalid_json_shape"
+    except Exception as exc:  # noqa: BLE001
+        metadata["reason"] = "ai_error"
+        metadata["error"] = str(exc)
+    return None, metadata
+
+
+def _sanitize_ai_plan_payload(parsed: dict[str, Any]) -> dict[str, Any]:
+    data = dict(parsed)
+    if not isinstance(data.get("permission_required"), str) or not data.get("permission_required"):
+        data["permission_required"] = "funcionario"
+    if not isinstance(data.get("risk_level"), str) or not data.get("risk_level"):
+        data["risk_level"] = "low"
+    if not isinstance(data.get("missing_params"), list):
+        data["missing_params"] = []
+    if not isinstance(data.get("extracted_params"), dict):
+        data["extracted_params"] = {}
+    if not isinstance(data.get("confidence"), (int, float)):
+        data["confidence"] = 0.0
+    return data
 
 
 def _normalize_plan(plan: AssistantPlan) -> AssistantPlan:
@@ -384,6 +456,8 @@ def _normalize_plan(plan: AssistantPlan) -> AssistantPlan:
     action = (plan.action or "unknown").strip().lower()
     params = dict(plan.extracted_params or {})
     original_action = action
+    risk_level = plan.risk_level
+    permission_required = plan.permission_required
 
     if domain in {"reports_redmine", "reports_ai"}:
         if action in REPORT_RUN_ACTION_ALIASES:
@@ -396,6 +470,13 @@ def _normalize_plan(plan: AssistantPlan) -> AssistantPlan:
         action = "create"
         if plan.intent in {AssistantIntent.UNKNOWN.value, "schedule_meeting", "schedule"}:
             plan = plan.model_copy(update={"intent": AssistantIntent.CREATE_MEETING.value})
+    elif domain == "project_advisor" and (plan.should_execute or action != "answer"):
+        action = "analyze"
+        params["read_only"] = True
+        params["read_only_enforced"] = True
+        risk_level = "low"
+        permission_required = "funcionario"
+        plan = plan.model_copy(update={"intent": AssistantIntent.ANALYZE_REDMINE_PROJECT.value})
 
     if original_action != action:
         params.setdefault("requested_action", original_action)
@@ -405,6 +486,8 @@ def _normalize_plan(plan: AssistantPlan) -> AssistantPlan:
         should_execute = False
 
     requires_confirmation = bool(should_execute and (plan.requires_confirmation or (domain, action) in CONFIRMATION_ACTIONS))
+    if domain == "project_advisor" and action == "analyze":
+        requires_confirmation = False
     return plan.model_copy(
         update={
             "domain": domain,
@@ -412,8 +495,15 @@ def _normalize_plan(plan: AssistantPlan) -> AssistantPlan:
             "extracted_params": params,
             "should_execute": should_execute,
             "requires_confirmation": requires_confirmation,
+            "risk_level": risk_level,
+            "permission_required": permission_required,
         }
     )
+
+
+def _with_routing_metadata(plan: AssistantPlan, metadata: dict[str, Any]) -> AssistantPlan:
+    current = dict(plan.routing_metadata or {})
+    return plan.model_copy(update={"routing_metadata": {**current, **metadata}})
 
 
 def _normalize(value: str) -> str:
@@ -539,6 +629,9 @@ def _looks_like_capability_question(normalized: str) -> bool:
         "me mostrar",
         "me traga",
         "me trazer",
+        "consulte ",
+        "consultar ",
+        "consulta ",
         "liste ",
         "listar ",
         "rode ",
@@ -557,7 +650,7 @@ def _capability_domain(normalized: str) -> str:
         return "meetings"
     if "360" in normalized or "avaliacao" in normalized:
         return "evaluation"
-    if "avaliar projeto" in normalized or "analise projeto" in normalized or "analisar projeto" in normalized or "risco do projeto" in normalized:
+    if _looks_like_project_advisor_request(normalized):
         return "project_advisor"
     if "redmine" in normalized or "relatorio" in normalized or "demandas" in normalized:
         return "reports_redmine"
@@ -575,7 +668,7 @@ def _capability_answer(normalized: str) -> str:
     if domain == "evaluation":
         return "Sim, posso consultar Avaliacao 360 por funcionario e resumir ciclo, notas, feedbacks, analise IA e alertas quando houver dados."
     if domain == "reports_redmine":
-        return "Sim, posso consultar ou preparar relatorios Redmine. Uma nova execucao de relatorio pede confirmacao antes de rodar."
+        return "Sim, posso consultar dados do Redmine em modo somente leitura ou preparar relatorios. Consulta direta de projetos usa o agente consultivo; nova execucao de relatorio pede confirmacao antes de rodar."
     if domain == "routines":
         return "Sim, posso consultar rotinas e preparar criacao, edicao ou execucao. Acoes com impacto exigem confirmacao."
     if domain == "notifications":
@@ -587,17 +680,46 @@ def _capability_answer(normalized: str) -> str:
 def _looks_like_project_advisor_request(normalized: str) -> bool:
     advisor_markers = (
         "avalie o projeto",
+        "avalie os projetos",
         "avaliar o projeto",
+        "avaliar os projetos",
         "analise o projeto",
+        "analise os projetos",
         "analisar o projeto",
+        "analisar os projetos",
+        "consulte o projeto",
+        "consulte os projetos",
+        "consultar o projeto",
+        "consultar os projetos",
+        "consulta o projeto",
+        "consulta os projetos",
         "diagnostico do projeto",
         "diagnóstico do projeto",
         "risco do projeto",
         "riscos do projeto",
         "saude do projeto",
         "saúde do projeto",
+        "agente do redmine consulte",
+        "agente redmine consulte",
     )
-    return any(marker in normalized for marker in advisor_markers) and "redmine" in normalized
+    if any(marker in normalized for marker in advisor_markers) and "redmine" in normalized:
+        return True
+    return (
+        "redmine" in normalized
+        and "projetos" in normalized
+        and any(word in normalized for word in ("consulte", "consultar", "consulta", "analise", "analisar", "avalie", "avaliar"))
+    )
+
+
+def _looks_like_project_collection_request(normalized: str) -> bool:
+    collection_markers = (
+        "os projetos",
+        "projetos do meu setor",
+        "todos os projetos",
+        "meus projetos",
+        "projetos configurados",
+    )
+    return any(marker in normalized for marker in collection_markers)
 
 
 def _project_id_from_advisor_text(text: str) -> str | None:

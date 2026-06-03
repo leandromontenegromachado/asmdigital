@@ -739,6 +739,14 @@ def _requires_ai_interpretation(prompt: str) -> bool:
     normalized = _normalize_prompt_text(_objective_text(prompt))
     if len(normalized) > 120:
         return True
+    if re.search(r"\batras|atrasada|atrasado|vencid", normalized, flags=re.IGNORECASE):
+        complex_terms_without_overdue = (
+            r"campo|campos|coluna|colunas|deve\s+ter|somente|apenas|"
+            r"status|situacao|situaÃ§Ã£o|data\s+prevista|vazia|vazio|"
+            r"orden|menor\s+que|maior\s+que|nao\s+trazer|nÃ£o\s+trazer|exceto|homologa"
+        )
+        if not re.search(rf"\b({complex_terms_without_overdue})\b", normalized, flags=re.IGNORECASE):
+            return False
     if re.search(r"\bcolunas?\b", normalized, flags=re.IGNORECASE):
         complex_terms = (
             r"status|situacao|data\s+prevista|vazia|vazio|"
@@ -1168,8 +1176,9 @@ def _parse_prompt_filters(
         "columns": _prompt_columns(prompt),
     }
 
+    needs_ai_interpretation = _requires_ai_interpretation(prompt)
     try:
-        ai_result = _call_prompt_interpreter_ai(db, prompt, defaults, connector)
+        ai_result = _call_prompt_interpreter_ai(db, prompt, defaults, connector) if needs_ai_interpretation else None
         if ai_result:
             raw_plan, interpreter_model = ai_result
             plan = _normalize_prompt_plan(raw_plan)
@@ -1262,7 +1271,7 @@ def _parse_prompt_filters(
             **output["prompt_options"],
             "interpreter": output["prompt_options"].get("interpreter", "fallback"),
         }
-        if not ai_result and _requires_ai_interpretation(prompt):
+        if not ai_result and needs_ai_interpretation:
             cached_options = _cached_prompt_options(defaults, prompt)
             if cached_options:
                 output["prompt_options"] = {

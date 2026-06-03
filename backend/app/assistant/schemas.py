@@ -59,6 +59,7 @@ class AssistantPlan(BaseModel):
     summary_for_user: str = "Nao entendi o pedido."
     risk_level: str = "low"
     permission_required: str = "funcionario"
+    routing_metadata: dict[str, Any] = Field(default_factory=dict)
 
 
 class AssistantHistoryItem(BaseModel):

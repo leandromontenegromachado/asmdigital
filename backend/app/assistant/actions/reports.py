@@ -150,7 +150,12 @@ class ReportsAction:
         owner = str(params.get("owner") or params.get("assignee") or params.get("user") or "").strip()
         status = str(params.get("status") or "").strip().lower()
         if owner or status:
-            status_text = "em aberto" if status in {"open", "opened", "aberto", "abertos"} else status
+            if status in {"open", "opened", "aberto", "abertos"}:
+                status_text = "em aberto"
+            elif status in {"overdue", "late", "atraso", "atrasada", "atrasadas", "atrasado", "atrasados", "vencida", "vencidas"}:
+                status_text = "em atraso"
+            else:
+                status_text = status
             parts = ["Liste as demandas do Redmine"]
             if status_text:
                 parts.append(status_text)
