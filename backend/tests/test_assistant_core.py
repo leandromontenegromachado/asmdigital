@@ -798,23 +798,35 @@ def test_prompt_report_drops_spurious_subject_filter_from_ai_plan():
     assert not any(item.get("field") == "subject" and item.get("values") == ["que estao"] for item in prompt_filters)
 
 
-def test_prompt_report_simple_overdue_query_does_not_call_ai_interpreter():
-    with patch("app.services.prompt_report_service._call_prompt_interpreter_ai") as ai_mock:
+def test_prompt_report_simple_overdue_query_uses_ai_interpreter():
+    with patch(
+        "app.services.prompt_report_service._call_prompt_interpreter_ai",
+        return_value=({"overdue_only": True}, "test-model"),
+    ) as ai_mock:
         filters = _parse_prompt_filters(MagicMock(), "quais as demandas atrasadas", {"project_ids": ["asm-dem"], "status_id": None})
 
-    ai_mock.assert_not_called()
-    assert filters["prompt_options"]["interpreter"] == "fallback"
+    ai_mock.assert_called_once()
+    assert filters["prompt_options"]["interpreter"] == "gemini"
     assert filters["prompt_options"]["overdue_only"] is True
     assert filters["prompt_options"]["ignore_date_filter"] is True
 
 
-def test_prompt_report_simple_overdue_assignee_query_does_not_call_ai_interpreter():
+def test_prompt_report_simple_overdue_assignee_query_uses_ai_interpreter():
     prompt = "Liste as demandas do Redmine em atraso do responsavel leandro montenegro machado."
 
-    with patch("app.services.prompt_report_service._call_prompt_interpreter_ai") as ai_mock:
+    with patch(
+        "app.services.prompt_report_service._call_prompt_interpreter_ai",
+        return_value=(
+            {
+                "overdue_only": True,
+                "filters": [{"field": "assigned_to", "operator": "contains", "values": ["leandro montenegro machado"]}],
+            },
+            "test-model",
+        ),
+    ) as ai_mock:
         filters = _parse_prompt_filters(MagicMock(), prompt, {"project_ids": ["asm-dem"], "status_id": None})
 
-    ai_mock.assert_not_called()
+    ai_mock.assert_called_once()
     assert filters["prompt_options"]["overdue_only"] is True
     assert {"field": "assigned_to", "operator": "contains", "values": ["leandro montenegro machado"]} in filters["prompt_options"]["prompt_filters"]
 

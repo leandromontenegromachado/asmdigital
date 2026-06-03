@@ -740,6 +740,10 @@ def _requires_ai_interpretation(prompt: str) -> bool:
     normalized = _normalize_prompt_text(_objective_text(prompt))
     if len(normalized) > 120:
         return True
+    if _requires_ai_quantitative_filter(prompt):
+        return True
+    if re.search(r"\batras|atrasada|atrasado|vencid", normalized, flags=re.IGNORECASE):
+        return True
     if re.search(r"\batras|atrasada|atrasado|vencid", normalized, flags=re.IGNORECASE):
         complex_terms_without_overdue = (
             r"campo|campos|coluna|colunas|deve\s+ter|somente|apenas|"
@@ -791,6 +795,41 @@ def _parse_excluded_status_names(prompt: str) -> list[str]:
             seen.add(key)
             result.append(item)
     return result
+
+
+def _requires_ai_quantitative_filter(prompt: str) -> bool:
+    normalized = _normalize_prompt_text(_objective_text(prompt))
+    if not re.search(r"\d+", normalized):
+        return False
+    return bool(
+        re.search(
+            r"\b("
+            r"mais\s+de|maior(?:es)?\s+que|acima\s+de|superior(?:es)?\s+a|"
+            r"menos\s+de|menor(?:es)?\s+que|abaixo\s+de|inferior(?:es)?\s+a|"
+            r"ate|at[eÃ©]|no\s+maximo|no\s+minimo"
+            r")\b|[<>]=?",
+            normalized,
+            flags=re.IGNORECASE,
+        )
+    )
+
+
+def _has_quantitative_prompt_filter(prompt_options: dict[str, Any]) -> bool:
+    for rule in prompt_options.get("prompt_filters") or []:
+        if not isinstance(rule, dict):
+            continue
+        operator = str(rule.get("operator") or "").lower()
+        field = str(rule.get("field") or "")
+        if operator in {"gt", "gte", "lt", "lte"} and field in {
+            "days_overdue",
+            "days_since_update",
+            "updated_on",
+            "due_date",
+            "created_on",
+            "done_ratio",
+        }:
+            return True
+    return False
 
 
 def _extract_json_object(text: str) -> str:
@@ -850,6 +889,10 @@ def _build_prompt_interpreter_request(prompt: str, defaults: dict[str, Any], con
         "nao crie filters para esse campo a menos que exista uma condicao explicita como vazio, mais de, menos de, antes, depois, maior ou menor.\n"
         "Exemplo: 'adicionar coluna ultima atualizacao' deve incluir updated_on em columns, sem criar filter em updated_on.\n"
         "Exemplo: 'demandas com data de atualizacao com mais de 7 dias' deve criar filter em updated_on.\n"
+        "Quando o usuario informar limite numerico ou comparacao, retorne obrigatoriamente um filtro estruturado com operador gt, gte, lt ou lte.\n"
+        "Exemplo: 'demandas com mais de 7 dias atrasadas' deve retornar overdue_only=true e "
+        "{\"field\":\"days_overdue\",\"operator\":\"gt\",\"values\":[7]} em filters.\n"
+        "Nao use apenas overdue_only quando existir limite numerico de atraso.\n"
         "Quando o usuario pedir regra de nao exibicao de linhas, retorne em filters.\n"
         "Exemplo: 'nao trazer demandas com status de homologada e homologacao' deve virar "
         "{\"field\":\"status\",\"operator\":\"not_in\",\"values\":[\"homologada\",\"homologacao\"]}.\n"
@@ -1199,15 +1242,6 @@ def _parse_prompt_filters(
                         **output["prompt_options"],
                         "exclude_status_names": excluded_status_names,
                     }
-            if deterministic_filters:
-                output["prompt_options"] = _append_prompt_filters(output["prompt_options"], deterministic_filters)
-            if assignee_filters:
-                output["prompt_options"] = _append_prompt_filters(output["prompt_options"], assignee_filters)
-            if deterministic_sort:
-                output["prompt_options"] = {
-                    **output["prompt_options"],
-                    "sort": deterministic_sort,
-                }
             if output["status_id"] == "open" and not _has_explicit_period(prompt):
                 output["prompt_options"] = {
                     **output["prompt_options"],
@@ -1218,6 +1252,13 @@ def _parse_prompt_filters(
                 "interpreter": "gemini",
                 "interpreter_model": interpreter_model,
             }
+            if _requires_ai_quantitative_filter(prompt) and not _has_quantitative_prompt_filter(output["prompt_options"]):
+                raise PromptInterpretationError(
+                    "Nao consegui interpretar este prompt de relatorio com seguranca porque a IA nao retornou o filtro numerico solicitado.",
+                    details=_interpretation_failure_details(prompt, output),
+                )
+    except PromptInterpretationError:
+        raise
     except Exception as exc:  # noqa: BLE001
         logger.warning("prompt_interpreter_ai_failed", extra={"error": str(exc)})
         cached_options = _cached_prompt_options(defaults, prompt)

@@ -242,7 +242,7 @@ def test_last_update_column_prompt_uses_updated_on_without_ai(monkeypatch):
     assert options["interpreter"] == "fallback"
 
 
-def test_ai_column_only_last_update_does_not_filter_rows(monkeypatch):
+def test_column_only_last_update_does_not_filter_rows(monkeypatch):
     prompt = "Trazer as demandas em aberto do recurso Leandro Montenegro Machado. Adicionar uma coluna com a ultima atualizacao"
 
     monkeypatch.setattr(
@@ -273,7 +273,7 @@ def test_ai_column_only_last_update_does_not_filter_rows(monkeypatch):
     ]
     assert {"field": "assigned_to", "operator": "contains", "values": ["leandro montenegro machado"]} in options["prompt_filters"]
     assert not any(rule.get("field") == "updated_on" for rule in options["prompt_filters"])
-    assert options["interpreter"] == "gemini"
+    assert options["interpreter"] == "fallback"
 
 
 def test_ai_contaminated_assignee_filter_is_removed(monkeypatch):
@@ -379,3 +379,45 @@ def test_ai_date_update_condition_keeps_updated_on_filter(monkeypatch):
     options = filters["prompt_options"]
 
     assert {"field": "updated_on", "operator": "lt", "value": "2026-05-25"} in options["prompt_filters"]
+
+
+def test_ai_interpreter_handles_overdue_numeric_limit(monkeypatch):
+    prompt = "Quais demandas esta a mais de 7 dias atrasadas ? adicionar a data prevista"
+
+    monkeypatch.setattr(
+        "app.services.prompt_report_service._call_prompt_interpreter_ai",
+        lambda *args, **kwargs: (
+            {
+                "overdue_only": True,
+                "columns": ["source_ref", "subject", "status", "assigned_to", "due_date"],
+                "filters": [{"field": "days_overdue", "operator": "gt", "values": [7]}],
+            },
+            "test-model",
+        ),
+    )
+
+    filters = _parse_prompt_filters(None, prompt, {"project_ids": ["asm-dem"]})
+    options = filters["prompt_options"]
+
+    assert options["interpreter"] == "gemini"
+    assert options["overdue_only"] is True
+    assert {"field": "days_overdue", "operator": "gt", "values": [7]} in options["prompt_filters"]
+    assert "due_date" in [column["key"] for column in options["columns"]]
+
+
+def test_ai_interpreter_rejects_incomplete_overdue_numeric_limit(monkeypatch):
+    prompt = "Quais demandas esta a mais de 7 dias atrasadas ? adicionar a data prevista"
+
+    monkeypatch.setattr(
+        "app.services.prompt_report_service._call_prompt_interpreter_ai",
+        lambda *args, **kwargs: (
+            {
+                "overdue_only": True,
+                "columns": ["source_ref", "subject", "status", "assigned_to", "due_date"],
+            },
+            "test-model",
+        ),
+    )
+
+    with pytest.raises(PromptInterpretationError):
+        _parse_prompt_filters(None, prompt, {"project_ids": ["asm-dem"]})
